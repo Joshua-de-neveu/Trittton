@@ -30,10 +30,9 @@ export function catalogUrl(subject: string, number: string): string {
   return `https://catalog.ucsd.edu/courses/${subject}.html#${subject.toLowerCase()}${number}`
 }
 
-export function webRegUrl(sectionId: string, term?: string): string {
-  const t = term || _term
-  // WebReg deep link — opens WebReg with the section pre-filled
-  return `https://act.ucsd.edu/webreg2/start?p2term=${t}&p2section=${sectionId}`
+export function webRegUrl(_sectionId?: string, _term?: string): string {
+  // WebReg does not support deep-linking to specific sections
+  return 'https://act.ucsd.edu/webreg2/start'
 }
 
 export function courseCodeToSubject(courseCode: string): string {

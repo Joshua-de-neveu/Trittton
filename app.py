@@ -39,24 +39,41 @@ HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
 }
 
+def _fetch_subjects(term):
+    """Fetch the live subject list from UCSD for a given term."""
+    try:
+        r = requests.get(
+            f"https://act.ucsd.edu/scheduleOfClasses/subject-list.json?selectedTerm={term}",
+            headers={"User-Agent": HEADERS["User-Agent"], "Referer": HEADERS["Referer"]},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return [s["code"].strip() for s in r.json() if s.get("code", "").strip()]
+    except Exception as e:
+        logging.error("Failed to fetch subject list: %s", e)
+        return []
+
+
+# Fallback list in case the dynamic fetch fails
 ALL_SUBJECTS = [
-    "AAS","AESE","AFR","AIP","ANBI","ANSC","ANTH","ANAR","ANAT","ANPH","ANES",
-    "BENG","BIBC","BILD","BIMD","BIMM","BISP","BGGN","BGSE","BGRD",
-    "CHEM","CHIN","CLAS","CLIN","CLRE","COGS","COMM","COMP","CGS","CSE","CSS","CAT",
-    "DERM","DSC","DSE","DSGN","DOC","EDS","ECE","ECON","ERC","ESYS","ETHN","ENVR",
-    "FILM","FMPH","FPMU","FLTS","FREN",
-    "GLBH","GPPA","GPEC","GPOL","GPPS","GPIM","GPCO",
-    "HISC","HIST","HDP","HITO","HIUS","HIEU","HIAF","HIEA","HILA","HINE","HUM",
-    "INASL","INTL","JAPN","JWSP",
-    "LIGN","LIHL","LISL","LISP","LTCS","LTEU","LTFR","LTEN","LTGM",
-    "LTCO","LTIT","LTKO","LTLA","LTRU","LTSP","LTTH","LTWR",
-    "MAE","MGTP","MGT","MGTA","MGTF","MGTH","MGTC","MGTB","MBC","MATS",
-    "MATH","MED","MDE","MSED","MMW","MUSC",
-    "NANO","NENG","NEUR","OBG","OPTH",
-    "PATH","PEDS","PHAR","PHCO","PHIL","PHYS","POLI","PSYC","PSYT",
-    "RADI","RELI","REV","RGST","SOCG","SOCI","SIO","SXTH","SURG",
-    "TDAC","TDDE","TDDR","TDGE","TDHT","TDMV","TDPW","TDPR","TDPF","TMC",
-    "USP","VIS","WARR","WCWP",
+    "AAS","AIP","ANBI","ANSC","ANTH","ANAR","ANES","ASTR","AUD","AWP",
+    "BENG","BNFO","BIEB","BICD","BIPN","BIBC","BGGN","BGJC","BGRD","BGSE","BILD","BIMM","BISP","BIOM",
+    "CMM","CENG","CHEM","CLX","CHIN","CLAS","CCS","CLIN","CLRE","COGS","COMM","COGR","CSS","CSE","COSE","CCE","CGS","CAT",
+    "TDDM","TDHD","TDMV","TDPF","TDTR","DSC","DSE","DERM","DSGN","DOC","DDPM",
+    "ECON","EAP","EDS","ERC","ECE","EMED","ENG","ENVR","ESYS","ETIM","ETHN","EXPR",
+    "FPM","FILM",
+    "GPCO","GPEC","GPGN","GPIM","GPLA","GPPA","GPPS","GLBH","GSS",
+    "HITO","HIAF","HIEA","HIEU","HILA","HISC","HISA","HINE","HIUS","HIGL","HIGR","HILD","HDS","HUM",
+    "INTL","JAPN","JWSP",
+    "LATI","LISL","LIAB","LIDS","LIFR","LIGN","LIGM","LIHL","LIIT","LIPO","LISP",
+    "LTAM","LTCO","LTCS","LTEU","LTFR","LTGM","LTGK","LTIT","LTKO","LTLA","LTRU","LTSP","LTTH","LTWR","LTEN","LTWL","LTEA",
+    "MMW","MBC","MATS","MATH","MSED","MAE","MED","MUIR","MCWP","MUS",
+    "NANO","NEU","NEUG","OBG","OPTH","ORTH",
+    "PATH","PEDS","PHAR","SPPS","PHIL","PAE","PHYS","POLI","PSY","PSYC","PH","PHB",
+    "RMAS","RAD","MGTF","MGT","MGTA","MGTP","RELI","RMED","REV",
+    "SPPH","SOMI","SOMC","SIOC","SIOG","SIOB","SIO","SEV","SOCG","SOCE","SOCI","SE","SURG","SYN",
+    "TDAC","TDDE","TDDR","TDGE","TDGR","TDHT","TDPW","TDPR","TMC",
+    "USP","UROL","VIS","WARR","WCWP","WES",
 ]
 
 VALID_TYPES = {"LE", "DI", "LA", "SE", "IN", "TA", "TU", "CL", "ST"}
@@ -220,7 +237,14 @@ def main():
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    total = len(ALL_SUBJECTS)
+    subjects = _fetch_subjects(TERM)
+    if not subjects:
+        print("Could not fetch live subject list, using fallback")
+        subjects = ALL_SUBJECTS
+    else:
+        print(f"Fetched {len(subjects)} subjects from UCSD")
+
+    total = len(subjects)
     print("UCSD Schedule of Classes Scraper")
     print(f"Term: {TERM}  |  Departments: {total}  |  Output: {OUTPUT}")
     print(f"Workers: 12 concurrent\n")
@@ -241,7 +265,7 @@ def main():
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         futures = {
             pool.submit(_fetch_one, i, subj): (i, subj)
-            for i, subj in enumerate(ALL_SUBJECTS)
+            for i, subj in enumerate(subjects)
         }
 
         for future in as_completed(futures):

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Import scraper functions
-from app import fetch_subject, parse_html, ALL_SUBJECTS, VALID_TYPES, DELAY
+from app import fetch_subject, parse_html, ALL_SUBJECTS, VALID_TYPES, DELAY, _fetch_subjects
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -186,22 +186,23 @@ def get_courses():
 
 @app.get("/api/scrape/start")
 def start_scrape(term: str = Query(default="SP26")):
+    subjects = _fetch_subjects(term) or ALL_SUBJECTS
     with scrape_lock:
         if scrape_state["status"] == "running":
             return {"message": "Scrape already running"}
         scrape_state.update({
             "status": "running",
             "current": 0,
-            "total": len(ALL_SUBJECTS),
+            "total": len(subjects),
             "currentSubject": "",
             "coursesFound": 0,
             "errors": [],
             "events": [],
         })
 
-    thread = threading.Thread(target=_run_scrape, args=(term,), daemon=True)
+    thread = threading.Thread(target=_run_scrape, args=(term, subjects), daemon=True)
     thread.start()
-    return {"message": "Scrape started", "total": len(ALL_SUBJECTS)}
+    return {"message": "Scrape started", "total": len(subjects)}
 
 
 GITHUB_TOKEN = _os.environ.get("GITHUB_TOKEN", "")
@@ -236,11 +237,13 @@ def _persist_to_github(file_path: str, content: str, message: str):
         logger.error("GitHub persist error: %s", e)
 
 
-def _run_scrape(term: str):
+def _run_scrape(term: str, subjects: list[str] | None = None):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import requests as req_lib
 
-    total = len(ALL_SUBJECTS)
+    if not subjects:
+        subjects = _fetch_subjects(term) or ALL_SUBJECTS
+    total = len(subjects)
     results: dict[int, list] = {}  # index -> courses
     completed_count = 0
     courses_found = 0
@@ -259,7 +262,7 @@ def _run_scrape(term: str):
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         futures = {
             pool.submit(_fetch_one, i, subj): (i, subj)
-            for i, subj in enumerate(ALL_SUBJECTS)
+            for i, subj in enumerate(subjects)
         }
 
         for future in as_completed(futures):
