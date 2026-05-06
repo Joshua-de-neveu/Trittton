@@ -252,12 +252,15 @@ def _run_scrape(term: str, subjects: list[str] | None = None):
     WORKERS = 12  # concurrent HTTP connections
 
     def _fetch_one(idx: int, subject: str) -> tuple[int, str, list | None]:
-        """Fetch + parse a single department. Returns (idx, subject, courses_or_None)."""
+        """Fetch + parse a single department (all pages). Returns (idx, subject, courses_or_None)."""
         session = req_lib.Session()
-        html = fetch_subject(session, term, subject)
-        if html is None:
+        pages = fetch_subject(session, term, subject)
+        if pages is None:
             return (idx, subject, None)
-        return (idx, subject, parse_html(html, subject))
+        courses = []
+        for html in pages:
+            courses.extend(parse_html(html, subject))
+        return (idx, subject, courses)
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         futures = {

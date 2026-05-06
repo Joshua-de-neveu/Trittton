@@ -81,6 +81,7 @@ VALID_TYPES = {"LE", "DI", "LA", "SE", "IN", "TA", "TU", "CL", "ST"}
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
 def fetch_subject(session, term, subject):
+    """Fetch all pages of results for a subject, returning a list of HTML strings."""
     payload = {
         "selectedTerm":      term,
         "selectedSubjects":  subject,
@@ -93,14 +94,29 @@ def fetch_subject(session, term, subject):
         "titleType":         "contain",
         "title":             "",
         "_selectedSubjects": "1",
-        "dropDownValue":     "MWF",
         "schedOption1Grad":  "true",
         "schedOption2Grad":  "true",
     }
     try:
-        r = session.post(SOC_URL, data=payload, headers=HEADERS, timeout=25)
+        r = session.post(SOC_URL, data=payload, headers=HEADERS, timeout=30)
         r.raise_for_status()
-        return r.text
+        pages = [r.text]
+
+        # Check for pagination
+        soup = BeautifulSoup(r.text, "lxml")
+        last_link = soup.find("a", string="Last")
+        if last_link:
+            m = re.search(r"page=(\d+)", last_link.get("href", ""))
+            total_pages = int(m.group(1)) if m else 1
+        else:
+            total_pages = 1
+
+        for page in range(2, total_pages + 1):
+            rp = session.get(f"{SOC_URL}?page={page}", headers=HEADERS, timeout=30)
+            rp.raise_for_status()
+            pages.append(rp.text)
+
+        return pages
     except requests.RequestException as e:
         logging.error("Error fetching %s: %s", subject, e)
         return None
@@ -257,10 +273,13 @@ def main():
 
     def _fetch_one(idx: int, subject: str) -> tuple[int, str, list | None]:
         session = requests.Session()
-        html = fetch_subject(session, TERM, subject)
-        if html is None:
+        pages = fetch_subject(session, TERM, subject)
+        if pages is None:
             return (idx, subject, None)
-        return (idx, subject, parse_html(html, subject))
+        courses = []
+        for html in pages:
+            courses.extend(parse_html(html, subject))
+        return (idx, subject, courses)
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         futures = {
