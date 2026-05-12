@@ -152,18 +152,18 @@ async function fetchBatch(term: string, subjects: string[]): Promise<Course[]> {
   return courses
 }
 
-async function fetchSubjects(term: string): Promise<string[]> {
+async function fetchSubjectsLive(term: string): Promise<string[] | null> {
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 5000) // 5s max
+    const timeout = setTimeout(() => controller.abort(), 4000)
     const res = await fetch(`/api/proxy/subjects?term=${term}`, { signal: controller.signal })
     clearTimeout(timeout)
-    if (!res.ok) return FALLBACK_SUBJECTS
+    if (!res.ok) return null
     const data = await res.json()
     const codes = data.map((s: { code: string }) => s.code.trim()).filter(Boolean)
-    return codes.length > 0 ? codes : FALLBACK_SUBJECTS
+    return codes.length > 0 ? codes : null
   } catch {
-    return FALLBACK_SUBJECTS
+    return null
   }
 }
 
@@ -176,14 +176,8 @@ export function useClientScraper(onComplete?: (courses: Course[]) => void) {
     setProgress({ ...defaultProgress, status: 'running' })
 
     try {
-      // 1. Get subject list
-      const subjects = await fetchSubjects(term)
-      if (!subjects.length) {
-        setProgress(p => ({ ...p, status: 'error', errors: ['Failed to fetch subjects'] }))
-        return
-      }
-
-      // 2. Create batches
+      // Use fallback subjects immediately — don't wait for server
+      const subjects = [...FALLBACK_SUBJECTS]
       const batches: string[][] = []
       for (let i = 0; i < subjects.length; i += BATCH_SIZE) {
         batches.push(subjects.slice(i, i + BATCH_SIZE))
@@ -191,42 +185,58 @@ export function useClientScraper(onComplete?: (courses: Course[]) => void) {
 
       setProgress(p => ({ ...p, total: subjects.length }))
 
-      // 3. Fire ALL batches at once — each updates progress as it completes
+      // Also try to get live subject list in background — if it arrives
+      // before we finish, we'll use any extra subjects it has
+      const livePromise = fetchSubjectsLive(term)
+
+      // Send first batch alone to warm up the server, then fire the rest
       const allCourses: Course[] = []
       let completedSubjects = 0
       const errors: string[] = []
 
-      const batchPromises = batches.map((batch, idx) =>
+      const updateProgress = (batch: string[]) => {
+        completedSubjects += batch.length
+        setProgress({
+          status: 'running',
+          current: completedSubjects,
+          total: subjects.length,
+          currentSubject: batch[batch.length - 1],
+          coursesFound: allCourses.length,
+          errors,
+        })
+      }
+
+      const processBatch = (batch: string[], idx: number) =>
         fetchBatch(term, batch).then(
-          (courses) => {
-            allCourses.push(...courses)
-            completedSubjects += batch.length
-            setProgress({
-              status: 'running',
-              current: completedSubjects,
-              total: subjects.length,
-              currentSubject: batch[batch.length - 1],
-              coursesFound: allCourses.length,
-              errors,
-            })
-          },
+          (courses) => { allCourses.push(...courses); updateProgress(batch) },
           (err) => {
-            const msg = `Batch ${idx + 1} failed: ${err instanceof Error ? err.message : 'unknown'}`
-            errors.push(msg)
-            completedSubjects += batch.length
-            setProgress({
-              status: 'running',
-              current: completedSubjects,
-              total: subjects.length,
-              currentSubject: batch[batch.length - 1],
-              coursesFound: allCourses.length,
-              errors,
-            })
+            errors.push(`Batch ${idx + 1} failed: ${err instanceof Error ? err.message : 'unknown'}`)
+            updateProgress(batch)
           }
         )
-      )
 
-      await Promise.all(batchPromises)
+      // Warm-up: send batch 1 first so Render wakes up
+      await processBatch(batches[0], 0)
+
+      // Fire remaining batches all at once
+      if (batches.length > 1) {
+        await Promise.all(batches.slice(1).map((b, i) => processBatch(b, i + 1)))
+      }
+
+      // Check if live subject list had extra subjects we missed
+      const liveSubjects = await livePromise
+      if (liveSubjects) {
+        const existing = new Set(subjects)
+        const extra = liveSubjects.filter(s => !existing.has(s))
+        if (extra.length > 0) {
+          // Fetch the extra subjects we didn't have in our fallback
+          const extraBatches: string[][] = []
+          for (let i = 0; i < extra.length; i += BATCH_SIZE) {
+            extraBatches.push(extra.slice(i, i + BATCH_SIZE))
+          }
+          await Promise.all(extraBatches.map((b, i) => processBatch(b, batches.length + i)))
+        }
+      }
 
       // 4. Save to server
       try {

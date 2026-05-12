@@ -52,7 +52,7 @@ export function useCourseData() {
     setIsLoading(true)
     try {
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 8000) // 8s max — don't wait for cold start
+      const timeout = setTimeout(() => controller.abort(), 3000) // 3s max — don't wait for cold start
       const res = await fetch('/api/courses', { signal: controller.signal })
       clearTimeout(timeout)
       if (!res.ok) return false
