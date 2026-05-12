@@ -86,7 +86,8 @@ TERMS_TTL = 600  # 10 minutes
 # Filter to standard academic terms students care about
 TERM_PREFIX_LABELS = {
     "FA": "Fall", "WI": "Winter", "SP": "Spring",
-    "S1": "Summer I", "S2": "Summer II",
+    "SA": "Summer (All)", "S1": "Summer I", "S2": "Summer II",
+    "S3": "Special Summer",
 }
 
 
@@ -165,6 +166,7 @@ def get_terms():
         # Fallback to hardcoded if scrape fails
         terms = [
             {"value": "SP26", "label": "Spring 2026"},
+            {"value": "SA26", "label": "Summer (All) 2026"},
             {"value": "S126", "label": "Summer I 2026"},
             {"value": "S226", "label": "Summer II 2026"},
         ]

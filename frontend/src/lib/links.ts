@@ -42,6 +42,7 @@ export function courseCodeToSubject(courseCode: string): string {
 // Fallback terms if the API hasn't loaded yet
 export const DEFAULT_TERM_OPTIONS = [
   { value: 'SP26', label: 'Spring 2026' },
+  { value: 'SA26', label: 'Summer (All) 2026' },
   { value: 'S126', label: 'Summer I 2026' },
   { value: 'S226', label: 'Summer II 2026' },
 ]
