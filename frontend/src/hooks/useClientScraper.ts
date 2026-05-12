@@ -3,6 +3,28 @@ import type { Course, Section, ScrapeProgress } from '../types'
 
 const BATCH_SIZE = 30
 
+// Hardcoded fallback so scraping starts instantly without waiting for the server
+const FALLBACK_SUBJECTS = [
+  'AIP','AAS','AWP','ANES','ANBI','ANAR','ANTH','ANSC','ASTR','AUD',
+  'BENG','BNFO','BIEB','BICD','BIPN','BIBC','BGGN','BGJC','BGRD','BGSE','BILD','BIMM','BISP','BIOM',
+  'CMM','CENG','CHEM','CLX','CHIN','CLAS','CCS','CLIN','CLRE','COGS','COMM','COGR','CSS','CSE','COSE','CCE','CGS','CAT',
+  'TDDM','TDHD','TDMV','TDPF','TDTR','DSC','DSE','DERM','DSGN','DOC','DDPM',
+  'ECON','EAP','EDS','ERC','ECE','EMED','ENG','ENVR','ESYS','ETIM','ETHN','EXPR',
+  'FPM','FILM',
+  'GPCO','GPEC','GPGN','GPIM','GPLA','GPPA','GPPS','GLBH','GSS',
+  'HITO','HIAF','HIEA','HIEU','HILA','HISC','HISA','HINE','HIUS','HIGL','HIGR','HILD','HDS','HUM',
+  'INTL','JAPN','JWSP',
+  'LATI','LISL','LIAB','LIDS','LIFR','LIGN','LIGM','LIHL','LIIT','LIPO','LISP',
+  'LTAM','LTCO','LTCS','LTEU','LTFR','LTGM','LTGK','LTIT','LTKO','LTLA','LTRU','LTSP','LTTH','LTWR','LTEN','LTWL','LTEA',
+  'MMW','MBC','MATS','MATH','MSED','MAE','MED','MUIR','MCWP','MUS',
+  'NANO','NEU','NEUG','OBG','OPTH','ORTH',
+  'PATH','PEDS','PHAR','SPPS','PHIL','PAE','PHYS','POLI','PSY','PSYC','PH','PHB',
+  'RMAS','RAD','MGTF','MGT','MGTA','MGTP','RELI','RMED','REV',
+  'SPPH','SOMI','SOMC','SIOC','SIOG','SIOB','SIO','SEV','SOCG','SOCE','SOCI','SE','SURG','SYN',
+  'TDAC','TDDE','TDDR','TDGE','TDGR','TDHT','TDPW','TDPR','TMC',
+  'USP','UROL','VIS','WARR','WCWP','WES',
+]
+
 const defaultProgress: ScrapeProgress = {
   status: 'idle',
   current: 0,
@@ -131,10 +153,18 @@ async function fetchBatch(term: string, subjects: string[]): Promise<Course[]> {
 }
 
 async function fetchSubjects(term: string): Promise<string[]> {
-  const res = await fetch(`/api/proxy/subjects?term=${term}`)
-  if (!res.ok) return []
-  const data = await res.json()
-  return data.map((s: { code: string }) => s.code.trim()).filter(Boolean)
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000) // 5s max
+    const res = await fetch(`/api/proxy/subjects?term=${term}`, { signal: controller.signal })
+    clearTimeout(timeout)
+    if (!res.ok) return FALLBACK_SUBJECTS
+    const data = await res.json()
+    const codes = data.map((s: { code: string }) => s.code.trim()).filter(Boolean)
+    return codes.length > 0 ? codes : FALLBACK_SUBJECTS
+  } catch {
+    return FALLBACK_SUBJECTS
+  }
 }
 
 export function useClientScraper(onComplete?: (courses: Course[]) => void) {

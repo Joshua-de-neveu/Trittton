@@ -47,11 +47,14 @@ export function useCourseData() {
     }
   }, [])
 
-  // Silent auto-load: tries server, returns true/false without setting error state
+  // Silent auto-load: tries server with a short timeout so we fall through to scraping fast
   const autoLoad = useCallback(async (): Promise<boolean> => {
     setIsLoading(true)
     try {
-      const res = await fetch('/api/courses')
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 8000) // 8s max — don't wait for cold start
+      const res = await fetch('/api/courses', { signal: controller.signal })
+      clearTimeout(timeout)
       if (!res.ok) return false
       const data = await res.json()
       if (!Array.isArray(data) || data.length === 0) return false
