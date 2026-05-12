@@ -13,7 +13,7 @@ import { CompletedCourses } from './components/CompletedCourses'
 import { GradProgress } from './components/GradProgress'
 import { useCourseData } from './hooks/useCourseData'
 import { useFilters } from './hooks/useFilters'
-import { useScraper } from './hooks/useScraper'
+import { useClientScraper } from './hooks/useClientScraper'
 import { useChat } from './hooks/useChat'
 import { useMySchedule } from './hooks/useMySchedule'
 import { useCompletedCourses } from './hooks/useCompletedCourses'
@@ -127,16 +127,12 @@ function AuthenticatedApp({
   const [model, setModel] = useState(() => localStorage.getItem('ucsd-ai-model') || 'sonnet')
   const [term, setTerm] = useState(() => localStorage.getItem('ucsd-term') || 'SP26')
 
-  const handleScrapeComplete = async () => {
-    try {
-      const res = await fetch('/api/courses')
-      const data = await res.json()
-      if (Array.isArray(data)) loadFromData(data)
-      setShowPanel(false)
-    } catch { /* */ }
-  }
+  const handleScrapeComplete = useCallback((courses: import('./types').Course[]) => {
+    loadFromData(courses)
+    setShowPanel(false)
+  }, [loadFromData])
 
-  const { progress, showPanel, setShowPanel, startScrape } = useScraper(handleScrapeComplete)
+  const { progress, showPanel, setShowPanel, startScrape } = useClientScraper(handleScrapeComplete)
   const { messages, isStreaming, thinkingPhase, error: chatError, sendMessage, clearChat } = useChat()
   const mySchedule = useMySchedule(term)
   const completedCourses = useCompletedCourses()
@@ -343,7 +339,14 @@ function AuthenticatedApp({
         progress={progress}
         show={showPanel}
         onClose={() => setShowPanel(false)}
-        onLoadResults={handleScrapeComplete}
+        onLoadResults={async () => {
+          try {
+            const res = await fetch('/api/courses')
+            const data = await res.json()
+            if (Array.isArray(data)) loadFromData(data)
+            setShowPanel(false)
+          } catch { /* */ }
+        }}
       />
     </div>
   )

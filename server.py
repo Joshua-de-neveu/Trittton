@@ -366,6 +366,114 @@ def scrape_status():
         }
 
 
+# ── Client-side scraping proxy ───────────────────────────────────────────────
+# Thin proxy so the browser can hit UCSD (bypasses CORS).
+# The browser does all orchestration and parsing.
+
+_UCSD_SOC_URL = "https://act.ucsd.edu/scheduleOfClasses/scheduleOfClassesStudentResult.htm"
+_UCSD_SUBJ_URL = "https://act.ucsd.edu/scheduleOfClasses/subject-list.json"
+_PROXY_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; UCSDCourseScraper/3.0; personal/educational)",
+    "Referer": "https://act.ucsd.edu/scheduleOfClasses/scheduleOfClassesStudent.htm",
+}
+
+
+@app.get("/api/proxy/subjects")
+def proxy_subjects(term: str = Query(default="SP26")):
+    """Return UCSD's subject list for a term."""
+    import requests as req_lib
+    try:
+        r = req_lib.get(f"{_UCSD_SUBJ_URL}?selectedTerm={term}",
+                        headers=_PROXY_HEADERS, timeout=15)
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+class ProxyBatchRequest(BaseModel):
+    term: str
+    subjects: list[str]
+
+
+@app.post("/api/proxy/batch")
+def proxy_batch(req: ProxyBatchRequest):
+    """Fetch a batch of subjects from UCSD (all pages) and return raw HTML pages.
+
+    The server handles session cookies and pagination so the browser
+    only needs to parse the returned HTML. This keeps the server as a
+    thin pipe — no HTML parsing happens here."""
+    import requests as req_lib
+    data_pairs = [
+        ("selectedTerm", req.term),
+        ("schedOption1", "true"),
+        ("schedOption2", "true"),
+        ("courses", ""),
+        ("sections", ""),
+        ("instructorType", "begin"),
+        ("instructor", ""),
+        ("titleType", "contain"),
+        ("title", ""),
+        ("_selectedSubjects", "1"),
+        ("schedOption1Grad", "true"),
+        ("schedOption2Grad", "true"),
+    ]
+    for s in req.subjects:
+        data_pairs.append(("selectedSubjects", s))
+    try:
+        session = req_lib.Session()
+        r = session.post(_UCSD_SOC_URL, data=data_pairs,
+                         headers={**_PROXY_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+                         timeout=30)
+        # Detect pagination
+        import re as _re
+        total_pages = 1
+        for m in _re.finditer(r"page=(\d+)", r.text):
+            total_pages = max(total_pages, int(m.group(1)))
+
+        pages = [r.text]
+
+        if total_pages > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _get_pg(pg):
+                rp = session.get(f"{_UCSD_SOC_URL}?page={pg}",
+                                 headers=_PROXY_HEADERS, timeout=30)
+                return (pg, rp.text)
+
+            remaining = {}
+            with ThreadPoolExecutor(max_workers=min(total_pages - 1, 8)) as pool:
+                futs = [pool.submit(_get_pg, p) for p in range(2, total_pages + 1)]
+                for f in as_completed(futs):
+                    pg, html = f.result()
+                    remaining[pg] = html
+            for pg in sorted(remaining):
+                pages.append(remaining[pg])
+
+        return JSONResponse({"pages": pages, "totalPages": total_pages})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+class SaveCoursesRequest(BaseModel):
+    courses: list
+    term: str = "SP26"
+
+
+@app.post("/api/courses/save")
+def save_courses(req: SaveCoursesRequest):
+    """Save client-scraped course data to disk and GitHub."""
+    course_json = json.dumps(req.courses, indent=2, ensure_ascii=False)
+    with open(OUTPUT, "w", encoding="utf-8") as f:
+        f.write(course_json)
+    # Persist to GitHub in background
+    threading.Thread(
+        target=_persist_to_github,
+        args=("all_courses.json", course_json, f"Update course data ({req.term}, {len(req.courses)} courses)"),
+        daemon=True,
+    ).start()
+    return {"saved": len(req.courses)}
+
+
 # ── AI Chat (Claude CLI) ────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
