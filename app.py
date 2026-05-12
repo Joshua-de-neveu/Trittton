@@ -102,14 +102,13 @@ def fetch_subject(session, term, subject):
         r.raise_for_status()
         pages = [r.text]
 
-        # Check for pagination
+        # Check for pagination — find highest page number from any pagination link
         soup = BeautifulSoup(r.text, "lxml")
-        last_link = soup.find("a", string="Last")
-        if last_link:
-            m = re.search(r"page=(\d+)", last_link.get("href", ""))
-            total_pages = int(m.group(1)) if m else 1
-        else:
-            total_pages = 1
+        total_pages = 1
+        for link in soup.find_all("a", href=re.compile(r"page=\d+")):
+            m = re.search(r"page=(\d+)", link["href"])
+            if m:
+                total_pages = max(total_pages, int(m.group(1)))
 
         for page in range(2, total_pages + 1):
             rp = session.get(f"{SOC_URL}?page={page}", headers=HEADERS, timeout=30)
