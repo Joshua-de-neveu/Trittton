@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Import scraper functions
-from app import fetch_subject, parse_html, ALL_SUBJECTS, VALID_TYPES, DELAY, _fetch_subjects
+from app import fetch_subject, parse_html, parse_html_multi, fetch_batch, ALL_SUBJECTS, VALID_TYPES, DELAY, _fetch_subjects, BATCH_SIZE
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -246,62 +246,67 @@ def _run_scrape(term: str, subjects: list[str] | None = None):
     if not subjects:
         subjects = _fetch_subjects(term) or ALL_SUBJECTS
     total = len(subjects)
-    results: dict[int, list] = {}  # index -> courses
-    completed_count = 0
+
+    # Batch subjects for fewer HTTP requests
+    batches = [subjects[i:i+BATCH_SIZE] for i in range(0, len(subjects), BATCH_SIZE)]
+    batch_results: dict[int, list] = {}
+    completed_subjects = 0
     courses_found = 0
     errors: list[str] = []
 
-    WORKERS = 20  # concurrent HTTP connections
+    WORKERS = 10
 
-    def _fetch_one(idx: int, subject: str) -> tuple[int, str, list | None]:
-        """Fetch + parse a single department (all pages). Returns (idx, subject, courses_or_None)."""
-        session = req_lib.Session()
-        pages = fetch_subject(session, term, subject)
-        if pages is None:
-            return (idx, subject, None)
-        courses = []
-        for html in pages:
-            courses.extend(parse_html(html, subject))
-        return (idx, subject, courses)
+    def _fetch_batch(idx: int, batch: list[str]) -> tuple[int, list[str], list | None]:
+        """Fetch + parse a batch of subjects (all pages). Returns (idx, subjects, courses)."""
+        try:
+            session = req_lib.Session()
+            pages = fetch_batch(session, term, batch)
+            courses = []
+            for html in pages:
+                courses.extend(parse_html_multi(html))
+            return (idx, batch, courses)
+        except Exception as e:
+            logger.error("Batch %d failed: %s", idx, e)
+            return (idx, batch, None)
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         futures = {
-            pool.submit(_fetch_one, i, subj): (i, subj)
-            for i, subj in enumerate(subjects)
+            pool.submit(_fetch_batch, i, batch): (i, batch)
+            for i, batch in enumerate(batches)
         }
 
         for future in as_completed(futures):
-            idx, subject, courses = future.result()
-            completed_count += 1
+            idx, batch, courses = future.result()
+            completed_subjects += len(batch)
 
             if courses is None:
-                err = f"Failed to fetch {subject}"
-                errors.append(err)
-                with scrape_lock:
-                    scrape_state["errors"].append(err)
-                _push_event({"error": err})
+                for subj in batch:
+                    err = f"Failed to fetch {subj}"
+                    errors.append(err)
+                    with scrape_lock:
+                        scrape_state["errors"].append(err)
+                _push_event({"error": f"Batch failed: {', '.join(batch)}"})
             else:
-                results[idx] = courses
-                courses_found += sum(len(c.get("sections", [])) >= 0 and 1 or 0 for c in courses)
-                courses_found = sum(len(r) for r in results.values())
+                batch_results[idx] = courses
+                courses_found = sum(len(r) for r in batch_results.values())
 
             with scrape_lock:
-                scrape_state["current"] = completed_count
-                scrape_state["currentSubject"] = subject
+                scrape_state["current"] = completed_subjects
+                scrape_state["currentSubject"] = batch[-1]
                 scrape_state["coursesFound"] = courses_found
 
             _push_event({
-                "current": completed_count,
+                "current": completed_subjects,
                 "total": total,
-                "currentSubject": subject,
+                "currentSubject": batch[-1],
                 "coursesFound": courses_found,
                 "status": "running",
             })
 
-    # Reassemble in original department order
+    # Reassemble in batch order
     all_courses = []
-    for i in range(total):
-        all_courses.extend(results.get(i, []))
+    for i in range(len(batches)):
+        all_courses.extend(batch_results.get(i, []))
 
     course_json = json.dumps(all_courses, indent=2, ensure_ascii=False)
     with open(OUTPUT, "w", encoding="utf-8") as f:

@@ -261,6 +261,136 @@ def parse_html(html, subject):
 
     return courses
 
+
+def parse_html_multi(html):
+    """Parse HTML containing multiple subjects. Auto-detects subject from <h2> headers."""
+    soup = BeautifulSoup(html, "lxml")
+    courses = []
+    current = None
+    current_subject = ""
+
+    for tr in soup.find_all("tr"):
+        tds = tr.find_all("td", recursive=False)
+        if not tds:
+            continue
+
+        # Detect subject from department header <h2> like "Mathematics (MATH )"
+        h2 = tr.find("h2")
+        if h2:
+            m = re.search(r"\(([A-Z]{2,6})\s*\)", clean(h2.get_text(" ")))
+            if m:
+                current_subject = m.group(1)
+            continue
+
+        row_class = " ".join(tds[0].get("class", []))
+
+        if "crsheader" in row_class:
+            texts = [clean(td.get_text(" ")) for td in tds]
+            if len(texts) < 3:
+                continue
+            restrictions = texts[0]
+            course_num = texts[1]
+            title_raw = texts[2]
+            if not re.match(r"^\d", course_num):
+                continue
+            units_match = re.search(r"\(\s*(\d+\.?\d*)\s*(?:Units?)?\s*\)", title_raw, re.I)
+            units = units_match.group(1) if units_match else ""
+            title = re.sub(r"\s*\(\s*\d+\.?\d*\s*(?:Units?)?\s*\)", "", title_raw).strip()
+            course_code = f"{current_subject} {course_num}"
+
+            if current and current["course_code"] == course_code:
+                if units and not current["units"]:
+                    current["units"] = units
+                if restrictions and not current["restrictions"]:
+                    current["restrictions"] = restrictions
+            else:
+                current = {
+                    "subject": current_subject,
+                    "course_code": course_code,
+                    "title": title,
+                    "units": units,
+                    "restrictions": restrictions,
+                    "sections": [],
+                }
+                courses.append(current)
+            continue
+
+        if current is None or "brdr" not in row_class:
+            continue
+
+        texts = [clean(td.get_text(" ")) for td in tds]
+        if len(texts) < 13:
+            continue
+
+        section_type = texts[3]
+        if section_type not in VALID_TYPES:
+            continue
+
+        available_raw = texts[10]
+        waitlist_match = re.search(r"Waitlist\((\d+)\)", available_raw)
+        if waitlist_match:
+            available = "0"
+            waitlisted = waitlist_match.group(1)
+        elif "FULL" in available_raw:
+            available = "0"
+            waitlisted = ""
+        else:
+            available = available_raw
+            waitlisted = ""
+
+        sec = {
+            "section_id": texts[2],
+            "type": section_type,
+            "section": texts[4],
+            "days": texts[5],
+            "time": texts[6],
+            "building": texts[7],
+            "room": texts[8],
+            "instructor": texts[9],
+            "available": available,
+            "limit": texts[11],
+            "waitlisted": waitlisted,
+        }
+        current["sections"].append(sec)
+
+    return courses
+
+
+def fetch_batch(session, term, subject_list):
+    """Fetch multiple subjects at once, returning all pages' HTML."""
+    data_pairs = list(_make_payload(term, "").items())
+    # Remove the empty selectedSubjects and add each subject
+    data_pairs = [(k, v) for k, v in data_pairs if k != "selectedSubjects"]
+    for s in subject_list:
+        data_pairs.append(("selectedSubjects", s))
+
+    r = session.post(SOC_URL, data=data_pairs, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+
+    total_pages = _get_total_pages(r.text)
+    if total_pages == 1:
+        return [r.text]
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    pages = {1: r.text}
+
+    def _get_page(pg):
+        rp = session.get(f"{SOC_URL}?page={pg}", headers=HEADERS, timeout=30)
+        rp.raise_for_status()
+        return (pg, rp.text)
+
+    with ThreadPoolExecutor(max_workers=min(total_pages - 1, 8)) as pool:
+        futs = [pool.submit(_get_page, p) for p in range(2, total_pages + 1)]
+        for f in as_completed(futs):
+            pg, html = f.result()
+            pages[pg] = html
+
+    return [pages[p] for p in sorted(pages)]
+
+
+BATCH_SIZE = 15
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
