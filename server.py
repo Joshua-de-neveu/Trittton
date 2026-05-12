@@ -441,7 +441,7 @@ def proxy_batch(req: ProxyBatchRequest):
                 return (pg, rp.text)
 
             remaining = {}
-            with ThreadPoolExecutor(max_workers=min(total_pages - 1, 8)) as pool:
+            with ThreadPoolExecutor(max_workers=min(total_pages - 1, 15)) as pool:
                 futs = [pool.submit(_get_pg, p) for p in range(2, total_pages + 1)]
                 for f in as_completed(futs):
                     pg, html = f.result()

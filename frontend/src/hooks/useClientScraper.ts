@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { Course, Section, ScrapeProgress } from '../types'
 
-const BATCH_SIZE = 15
-const CONCURRENCY = 4 // how many batches in parallel
+const BATCH_SIZE = 30
 
 const defaultProgress: ScrapeProgress = {
   status: 'idle',
@@ -162,40 +161,42 @@ export function useClientScraper(onComplete?: (courses: Course[]) => void) {
 
       setProgress(p => ({ ...p, total: subjects.length }))
 
-      // 3. Process batches with limited concurrency
+      // 3. Fire ALL batches at once — each updates progress as it completes
       const allCourses: Course[] = []
       let completedSubjects = 0
       const errors: string[] = []
 
-      // Process in waves of CONCURRENCY batches
-      for (let i = 0; i < batches.length; i += CONCURRENCY) {
-        const wave = batches.slice(i, i + CONCURRENCY)
-        const results = await Promise.allSettled(
-          wave.map(batch => fetchBatch(term, batch))
-        )
-
-        for (let j = 0; j < results.length; j++) {
-          const result = results[j]
-          const batch = wave[j]
-          completedSubjects += batch.length
-
-          if (result.status === 'fulfilled') {
-            allCourses.push(...result.value)
-          } else {
-            const err = `Batch failed: ${batch.join(', ')}`
-            errors.push(err)
+      const batchPromises = batches.map((batch, idx) =>
+        fetchBatch(term, batch).then(
+          (courses) => {
+            allCourses.push(...courses)
+            completedSubjects += batch.length
+            setProgress({
+              status: 'running',
+              current: completedSubjects,
+              total: subjects.length,
+              currentSubject: batch[batch.length - 1],
+              coursesFound: allCourses.length,
+              errors,
+            })
+          },
+          (err) => {
+            const msg = `Batch ${idx + 1} failed: ${err instanceof Error ? err.message : 'unknown'}`
+            errors.push(msg)
+            completedSubjects += batch.length
+            setProgress({
+              status: 'running',
+              current: completedSubjects,
+              total: subjects.length,
+              currentSubject: batch[batch.length - 1],
+              coursesFound: allCourses.length,
+              errors,
+            })
           }
+        )
+      )
 
-          setProgress({
-            status: 'running',
-            current: completedSubjects,
-            total: subjects.length,
-            currentSubject: batch[batch.length - 1],
-            coursesFound: allCourses.length,
-            errors,
-          })
-        }
-      }
+      await Promise.all(batchPromises)
 
       // 4. Save to server
       try {
