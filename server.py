@@ -251,7 +251,7 @@ def _run_scrape(term: str, subjects: list[str] | None = None):
     courses_found = 0
     errors: list[str] = []
 
-    WORKERS = 12  # concurrent HTTP connections
+    WORKERS = 20  # concurrent HTTP connections
 
     def _fetch_one(idx: int, subject: str) -> tuple[int, str, list | None]:
         """Fetch + parse a single department (all pages). Returns (idx, subject, courses_or_None)."""

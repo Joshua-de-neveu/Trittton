@@ -80,9 +80,8 @@ VALID_TYPES = {"LE", "DI", "LA", "SE", "IN", "TA", "TU", "CL", "ST"}
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
-def fetch_subject(session, term, subject):
-    """Fetch all pages of results for a subject, returning a list of HTML strings."""
-    payload = {
+def _make_payload(term, subject):
+    return {
         "selectedTerm":      term,
         "selectedSubjects":  subject,
         "schedOption1":      "true",
@@ -97,25 +96,42 @@ def fetch_subject(session, term, subject):
         "schedOption1Grad":  "true",
         "schedOption2Grad":  "true",
     }
+
+
+def _get_total_pages(html):
+    """Find the highest page number from pagination links."""
+    total = 1
+    for m in re.finditer(r"page=(\d+)", html):
+        total = max(total, int(m.group(1)))
+    return total
+
+
+def fetch_subject(session, term, subject):
+    """Fetch all pages of results for a subject, returning a list of HTML strings."""
     try:
-        r = session.post(SOC_URL, data=payload, headers=HEADERS, timeout=30)
+        r = session.post(SOC_URL, data=_make_payload(term, subject), headers=HEADERS, timeout=30)
         r.raise_for_status()
-        pages = [r.text]
 
-        # Check for pagination — find highest page number from any pagination link
-        soup = BeautifulSoup(r.text, "lxml")
-        total_pages = 1
-        for link in soup.find_all("a", href=re.compile(r"page=\d+")):
-            m = re.search(r"page=(\d+)", link["href"])
-            if m:
-                total_pages = max(total_pages, int(m.group(1)))
+        total_pages = _get_total_pages(r.text)
+        if total_pages == 1:
+            return [r.text]
 
-        for page in range(2, total_pages + 1):
-            rp = session.get(f"{SOC_URL}?page={page}", headers=HEADERS, timeout=30)
+        # Fetch remaining pages concurrently
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        pages = {1: r.text}
+
+        def _get_page(pg):
+            rp = session.get(f"{SOC_URL}?page={pg}", headers=HEADERS, timeout=30)
             rp.raise_for_status()
-            pages.append(rp.text)
+            return (pg, rp.text)
 
-        return pages
+        with ThreadPoolExecutor(max_workers=total_pages - 1) as pool:
+            futs = [pool.submit(_get_page, p) for p in range(2, total_pages + 1)]
+            for f in as_completed(futs):
+                pg, html = f.result()
+                pages[pg] = html
+
+        return [pages[p] for p in sorted(pages)]
     except requests.RequestException as e:
         logging.error("Error fetching %s: %s", subject, e)
         return None
@@ -262,13 +278,13 @@ def main():
     total = len(subjects)
     print("UCSD Schedule of Classes Scraper")
     print(f"Term: {TERM}  |  Departments: {total}  |  Output: {OUTPUT}")
-    print(f"Workers: 12 concurrent\n")
+    print(f"Workers: 20 concurrent\n")
 
     results: dict[int, list] = {}
     completed = 0
     start_time = time.time()
 
-    WORKERS = 12
+    WORKERS = 20
 
     def _fetch_one(idx: int, subject: str) -> tuple[int, str, list | None]:
         session = requests.Session()
