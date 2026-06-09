@@ -26,12 +26,14 @@ function pad(n: number): string {
 }
 
 function toICSDate(dateStr: string, hours: number, minutes: number): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(hours)}${pad(minutes)}00`
+  // Parse date string directly to avoid timezone shifting
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return `${year}${pad(month)}${pad(day)}T${pad(hours)}${pad(minutes)}00`
 }
 
 function findFirstDayOnOrAfter(startDate: string, targetDayOffset: number): string {
-  const d = new Date(startDate + 'T00:00:00')
+  // Use noon to avoid DST/timezone edge cases
+  const d = new Date(startDate + 'T12:00:00')
   const currentDay = d.getDay()
   let diff = targetDayOffset - currentDay
   if (diff < 0) diff += 7

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import type { Course, FilterState } from '../types'
 import { courseAvailStatus } from '../lib/availability'
 
@@ -11,6 +11,14 @@ const defaultFilters: FilterState = {
 
 export function useFilters(courses: Course[]) {
   const [filters, setFilters] = useState<FilterState>(defaultFilters)
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // Debounce search input by 200ms
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => setDebouncedSearch(filters.search), 200)
+    return () => clearTimeout(debounceRef.current)
+  }, [filters.search])
 
   const departments = useMemo(() => {
     const deptMap = new Map<string, number>()
@@ -23,7 +31,7 @@ export function useFilters(courses: Course[]) {
   }, [courses])
 
   const filtered = useMemo(() => {
-    const q = filters.search.toLowerCase().trim()
+    const q = debouncedSearch.toLowerCase().trim()
     return courses.filter((c) => {
       if (filters.department !== 'ALL' && c.subject !== filters.department) return false
 
@@ -45,7 +53,7 @@ export function useFilters(courses: Course[]) {
 
       return true
     })
-  }, [courses, filters])
+  }, [courses, debouncedSearch, filters.department, filters.sectionType, filters.availability])
 
   const stats = useMemo(
     () => ({
@@ -56,10 +64,10 @@ export function useFilters(courses: Course[]) {
     [courses, departments],
   )
 
-  const setSearch = (search: string) => setFilters((f) => ({ ...f, search }))
-  const setDepartment = (department: string) => setFilters((f) => ({ ...f, department }))
-  const setSectionType = (sectionType: string) => setFilters((f) => ({ ...f, sectionType }))
-  const setAvailability = (availability: string) => setFilters((f) => ({ ...f, availability }))
+  const setSearch = useCallback((search: string) => setFilters((f) => ({ ...f, search })), [])
+  const setDepartment = useCallback((department: string) => setFilters((f) => ({ ...f, department })), [])
+  const setSectionType = useCallback((sectionType: string) => setFilters((f) => ({ ...f, sectionType })), [])
+  const setAvailability = useCallback((availability: string) => setFilters((f) => ({ ...f, availability })), [])
 
   return {
     filters,

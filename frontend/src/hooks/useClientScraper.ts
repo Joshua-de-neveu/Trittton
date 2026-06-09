@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { Course, Section, ScrapeProgress } from '../types'
 
 const BATCH_SIZE = 30
@@ -170,8 +170,13 @@ async function fetchSubjectsLive(term: string): Promise<string[] | null> {
 export function useClientScraper(onComplete?: (courses: Course[]) => void) {
   const [progress, setProgress] = useState<ScrapeProgress>(defaultProgress)
   const [showPanel, setShowPanel] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
 
   const startScrape = useCallback(async (term: string = 'SP26') => {
+    // Abort any previous scrape
+    abortRef.current?.abort()
+    const abort = new AbortController()
+    abortRef.current = abort
     setShowPanel(true)
     setProgress({ ...defaultProgress, status: 'running' })
 
@@ -269,6 +274,8 @@ export function useClientScraper(onComplete?: (courses: Course[]) => void) {
   }, [onComplete])
 
   const stopScrape = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
     setProgress(p => ({ ...p, status: 'idle' }))
   }, [])
 

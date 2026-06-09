@@ -68,7 +68,7 @@ export function FourYearPlan({ plan, allCourses, onAddCourse, onRemoveCourse, on
             </div>
           </div>
           <button
-            onClick={onClearAll}
+            onClick={() => { if (confirm('Clear your entire 4-year plan?')) onClearAll() }}
             className="px-3 py-1.5 rounded-lg text-[12px] font-medium
               bg-red/10 text-red border border-red/20
               hover:bg-red/20 transition-all cursor-pointer"
@@ -232,7 +232,7 @@ function QuarterCard({ quarter, allCourses, uniqueCodes, onAdd, onRemove, onClea
         </div>
         {quarter.courses.length > 0 && (
           <button
-            onClick={onClear}
+            onClick={() => { if (confirm(`Clear all courses from ${quarter.quarter}?`)) onClear() }}
             className="text-[11px] text-dim hover:text-red transition-colors cursor-pointer"
             title="Clear quarter"
           >

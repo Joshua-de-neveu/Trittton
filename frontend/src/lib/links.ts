@@ -14,7 +14,7 @@ export function socSearchUrl(subject: string, term?: string): string {
 }
 
 export function capeUrl(courseCode: string): string {
-  return `https://cape.ucsd.edu/responses/Results.aspx?courseNumber=${encodeURIComponent(courseCode.replace(' ', '+'))}`
+  return `https://cape.ucsd.edu/responses/Results.aspx?courseNumber=${encodeURIComponent(courseCode.replaceAll(' ', '+'))}`
 }
 
 export function capeInstructorUrl(instructor: string): string {

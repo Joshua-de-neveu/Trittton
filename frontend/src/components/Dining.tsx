@@ -128,7 +128,7 @@ interface DiningProps {
   onRequestKey?: () => void
 }
 
-export function Dining({ }: DiningProps) {
+export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey: _geminiKey, onRequestKey: _onRequestKey }: DiningProps) {
   const [menus, setMenus] = useState<Record<string, LocationMenu>>({})
   const [loading, setLoading] = useState(true)
   const [selectedHallId, setSelectedHallId] = useState('')

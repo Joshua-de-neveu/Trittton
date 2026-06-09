@@ -164,7 +164,7 @@ export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onCle
               <b className="text-text">{bySubject.size}</b> departments
             </div>
             <button
-              onClick={onClear}
+              onClick={() => { if (confirm(`Clear all ${completed.length} completed courses?`)) onClear() }}
               className="text-[11px] px-2 py-1 rounded-md text-red/60 hover:text-red hover:bg-red/10 transition-all cursor-pointer"
             >
               Clear All

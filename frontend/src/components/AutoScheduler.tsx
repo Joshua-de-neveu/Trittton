@@ -125,7 +125,7 @@ export function AutoScheduler({ model, onModelChange, geminiKey }: { model: stri
       if (data.busy_blocks?.length) setCalEvents(data.busy_blocks)
     } catch { setMsg('Failed to generate') }
     finally { setLoading(false) }
-  }, [assignments, leisure, model])
+  }, [assignments, leisure, model, geminiKey])
 
   const pushToCalendar = useCallback(async () => {
     if (!result) return; setPushing(true)
@@ -189,7 +189,7 @@ export function AutoScheduler({ model, onModelChange, geminiKey }: { model: stri
       }
     } catch { /* */ }
     finally { setChatStreaming(false) }
-  }, [chatInput, chatMsgs, chatStreaming, model, result, assignments, leisure, calEvents])
+  }, [chatInput, chatMsgs, chatStreaming, model, result, assignments, leisure, calEvents, geminiKey])
 
   const pending = assignments.filter((a) => !a.done).length
   const totalEffort = assignments.filter((a) => !a.done).reduce((s, a) => s + (EFFORT_HOURS[a.difficulty] || 3), 0)

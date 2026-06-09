@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo } from 'react'
 import type { Course, Section } from '../types'
 import { courseAvailStatus } from '../lib/availability'
 import { SectionTable } from './SectionTable'
@@ -21,7 +21,7 @@ interface CourseCardProps {
   onUnwatch?: (sectionId: string, courseCode: string, section: string) => void
 }
 
-export function CourseCard({ course, index, onAddToSchedule, isInSchedule, hasSection, hasCompleted, getRating, isWatching, onWatch, onUnwatch }: CourseCardProps) {
+export const CourseCard = memo(function CourseCard({ course, index, onAddToSchedule, isInSchedule, hasSection, hasCompleted, getRating, isWatching, onWatch, onUnwatch }: CourseCardProps) {
   const [open, setOpen] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
   const [showCompare, setShowCompare] = useState(false)
@@ -282,7 +282,7 @@ export function CourseCard({ course, index, onAddToSchedule, isInSchedule, hasSe
       </div>
     </div>
   )
-}
+})
 
 function SectionPicker({
   sections,

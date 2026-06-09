@@ -15,7 +15,7 @@ interface MyScheduleProps {
   onClear: () => void
 }
 
-const GCAL_EMAIL = 'joshhatzer@gmail.com'
+// Email fetched dynamically from /api/gcal/status
 
 type GCalStatus = { configured: boolean; connected: boolean; email: string }
 
@@ -103,7 +103,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
   }
 
   const handleGoogleCalendarICS = () => {
-    downloadICS(schedule, term, GCAL_EMAIL)
+    downloadICS(schedule, term, gcalStatus?.email || '')
   }
 
   if (schedule.length === 0) {
@@ -155,7 +155,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
                   bg-green/10 text-green border border-green/20
                   hover:bg-green/20 transition-all cursor-pointer flex items-center gap-1.5
                   disabled:opacity-50"
-                title={`Sync to Google Calendar (${GCAL_EMAIL})`}
+                title={`Sync to Google Calendar (${gcalStatus?.email || 'your Google Calendar'})`}
               >
                 {syncing ? (
                   <span className="w-3 h-3 border-2 border-green/30 border-t-green rounded-full animate-spin" />
@@ -184,7 +184,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
                 className="px-3 py-1.5 rounded-lg text-[12px] font-medium
                   bg-green/10 text-green border border-green/20
                   hover:bg-green/20 transition-all cursor-pointer flex items-center gap-1.5"
-                title={`Download .ics for Google Calendar (${GCAL_EMAIL})`}
+                title={`Download .ics for Google Calendar (${gcalStatus?.email || 'your Google Calendar'})`}
               >
                 <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
@@ -201,7 +201,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
               Export Report
             </button>
             <button
-              onClick={onClear}
+              onClick={() => { if (confirm(`Clear all ${schedule.length} courses from your schedule?`)) onClear() }}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium
                 bg-red/10 text-red border border-red/20
                 hover:bg-red/20 transition-all cursor-pointer"
@@ -292,10 +292,10 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
 
         <div className="text-[11px] text-dim text-center pb-4">
           {gcalStatus?.connected
-            ? `Auto-syncing to Google Calendar (${GCAL_EMAIL}) · Each term gets its own calendar`
+            ? `Auto-syncing to Google Calendar (${gcalStatus?.email || 'your Google Calendar'}) · Each term gets its own calendar`
             : gcalStatus?.configured
-              ? `Connect Google Calendar to auto-sync · ${GCAL_EMAIL}`
-              : `Export .ics to import into Google Calendar · ${GCAL_EMAIL}`}
+              ? `Connect Google Calendar to auto-sync · ${gcalStatus?.email || 'your Google Calendar'}`
+              : `Export .ics to import into Google Calendar · ${gcalStatus?.email || 'your Google Calendar'}`}
         </div>
       </div>
     </div>

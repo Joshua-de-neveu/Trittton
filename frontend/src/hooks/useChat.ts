@@ -29,9 +29,12 @@ export function useChat() {
     }
   }, [messages, isStreaming])
 
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+
   const sendMessage = useCallback(async (text: string, model: string = 'sonnet', term: string = 'SP26', completedCourses: string = '', geminiKey: string | null = null) => {
     const userMsg: ChatMessage = { role: 'user', content: text }
-    const newMessages = [...messages, userMsg]
+    const newMessages = [...messagesRef.current, userMsg]
     setMessages(newMessages)
     setIsStreaming(true)
     setThinkingPhase('Sending to Claude...')
@@ -114,7 +117,12 @@ export function useChat() {
       setIsStreaming(false)
       setThinkingPhase(null)
     }
-  }, [messages])
+  }, []) // stable: reads from messagesRef
+
+  // Abort in-flight request on unmount
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
 
   const clearChat = useCallback(() => {
     abortRef.current?.abort()

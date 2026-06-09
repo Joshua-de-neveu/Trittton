@@ -1,5 +1,34 @@
 import { useState, useEffect, useCallback } from 'react'
 
+const ALLOWED_TAGS = new Set(['p', 'br', 'b', 'strong', 'i', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'span', 'div', 'a'])
+const ALLOWED_ATTRS = new Set(['href', 'target', 'rel'])
+
+function sanitizeHTML(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  function clean(node: Node): void {
+    const children = Array.from(node.childNodes)
+    for (const child of children) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const el = child as Element
+        if (!ALLOWED_TAGS.has(el.tagName.toLowerCase())) {
+          el.replaceWith(...Array.from(el.childNodes))
+          continue
+        }
+        for (const attr of Array.from(el.attributes)) {
+          if (!ALLOWED_ATTRS.has(attr.name.toLowerCase())) el.removeAttribute(attr.name)
+        }
+        if (el.tagName === 'A') {
+          el.setAttribute('target', '_blank')
+          el.setAttribute('rel', 'noopener noreferrer')
+        }
+        clean(el)
+      }
+    }
+  }
+  clean(doc.body)
+  return doc.body.innerHTML
+}
+
 interface InternshipField {
   id: string
   label: string
@@ -382,7 +411,7 @@ export function Internships() {
               </div>
             ) : jobDetail?.description_html ? (
               <div className="prose-internship text-[13px] text-muted leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: jobDetail.description_html }} />
+                dangerouslySetInnerHTML={{ __html: sanitizeHTML(jobDetail.description_html) }} />
             ) : jobDetail?.description_text ? (
               <div className="text-[13px] text-muted leading-relaxed whitespace-pre-wrap">
                 {jobDetail.description_text}

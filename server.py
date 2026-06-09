@@ -34,7 +34,7 @@ CLAUDE_BIN = shutil.which("claude") or "/opt/homebrew/bin/claude"
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
-AUTH_EMAIL = _os.environ.get("AUTH_EMAIL", "joshhatzer@gmail.com")
+AUTH_EMAIL = _os.environ.get("AUTH_EMAIL", "")
 AUTH_HASH = _os.environ.get("AUTH_HASH", "16057e270cb342728edd61cd2072788626ad4f2bb58e81e0659543ea8aecebe1")
 _auth_tokens: set = set()
 
@@ -1737,7 +1737,7 @@ def push_study_blocks(req: PushBlocksRequest):
 GCAL_CREDS_FILE = BASE_DIR / "gcal_credentials.json"
 GCAL_TOKEN_FILE = BASE_DIR / "gcal_token.json"
 GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar"]
-GCAL_EMAIL = "joshhatzer@gmail.com"
+GCAL_EMAIL = _os.environ.get("GCAL_EMAIL", "")
 
 # Quarter instruction date ranges
 TERM_DATES = {
