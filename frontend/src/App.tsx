@@ -346,7 +346,8 @@ function AuthenticatedApp({
         onAddCourseStub={(code) => { setActiveView('browse'); setSearch(code) }} model={model} onModelChange={setModel} />
     if (activeView === 'schedule' && isLoaded)
       return <MySchedule schedule={mySchedule.schedule} proposal={mySchedule.asProposal} term={term}
-        onRemove={mySchedule.removeCourse} onRemoveSection={mySchedule.removeSection} onClear={handleClearSchedule} />
+        onRemove={mySchedule.removeCourse} onRemoveSection={mySchedule.removeSection} onClear={handleClearSchedule}
+        termOptions={termOptions} onTermChange={setTerm} allSchedules={mySchedule.allSchedules} />
     if (activeView === 'planner')
       return <FourYearPlan plan={fourYearPlan.plan} allCourses={courses} onAddCourse={fourYearPlan.addCourse}
         onRemoveCourse={(quarter, courseCode) => {

@@ -1922,7 +1922,19 @@ def _find_first_day(start_date: str, target_rrule_day: str) -> str:
 
 @app.post("/api/gcal/sync")
 def gcal_sync(req: GCalSyncRequest):
-    """Sync schedule to Google Calendar. Creates/updates a calendar for the term."""
+    """Sync the local schedule to Google Calendar.
+
+    Strategy:
+    - Find/create a per-term calendar named "UCSD <term label>".
+    - Tag every event we create with extendedProperties.private.trittton = "1" plus a
+      stable section_key (course_code + type + section). On each sync we list ONLY events
+      with trittton=1, diff against the current schedule, and:
+        * insert any sections we don't have in GCal yet
+        * delete trittton-tagged events whose section is no longer in the schedule
+        * leave every non-Trittton event in that calendar alone
+    - This means: if the user removes a course in the app, its GCal events disappear
+      on the next sync — and we never touch manually-added events.
+    """
     service = _get_gcal_service()
     if not service:
         return JSONResponse({"error": "Google Calendar not connected. Authorize first."}, status_code=401)
@@ -1945,76 +1957,170 @@ def gcal_sync(req: GCalSyncRequest):
     try:
         # Find or create the calendar for this term
         cal_id = None
+        calendar_created_by_trittton = False
+        cal_description_marker = f"UCSD course schedule for {term_label}"
         calendars = service.calendarList().list().execute()
         for cal in calendars.get("items", []):
             if cal.get("summary") == cal_name:
                 cal_id = cal["id"]
+                # Pull the underlying calendar (calendarList doesn't include description)
+                try:
+                    full = service.calendars().get(calendarId=cal_id).execute()
+                    if (full.get("description") or "").startswith(cal_description_marker):
+                        calendar_created_by_trittton = True
+                except Exception:
+                    pass
                 break
 
         if not cal_id:
             new_cal = service.calendars().insert(body={
                 "summary": cal_name,
-                "description": f"UCSD course schedule for {term_label}",
+                "description": cal_description_marker,
                 "timeZone": "America/Los_Angeles",
             }).execute()
             cal_id = new_cal["id"]
+            calendar_created_by_trittton = True
 
-        # Clear existing events in this calendar
-        existing = service.events().list(calendarId=cal_id, maxResults=500).execute()
-        for evt in existing.get("items", []):
-            service.events().delete(calendarId=cal_id, eventId=evt["id"]).execute()
-
-        # Create events for each section
-        created = 0
+        # ── Build the desired set of section_keys from the request ──
+        # section_key uniquely identifies a section within a term — course_code, type, and section letter.
+        desired = {}  # section_key -> (course, section_dict)
         for course in req.courses:
+            code = course.get("course_code", "")
+            for sec in course.get("sections", []):
+                key = f"{code}|{sec.get('type', '')}|{sec.get('section', '')}"
+                desired[key] = (course, sec)
+
+        # ── List ONLY Trittton-tagged events in this calendar ──
+        # privateExtendedProperty filter ensures we never touch user-managed events.
+        existing_trittton: dict[str, str] = {}  # section_key -> event_id
+        page_token = None
+        while True:
+            params = {
+                "calendarId": cal_id,
+                "maxResults": 250,
+                "privateExtendedProperty": "trittton=1",
+                "showDeleted": False,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            page = service.events().list(**params).execute()
+            for evt in page.get("items", []):
+                ext = (evt.get("extendedProperties") or {}).get("private") or {}
+                sk = ext.get("section_key")
+                if sk:
+                    existing_trittton[sk] = evt["id"]
+            page_token = page.get("nextPageToken")
+            if not page_token:
+                break
+
+        # ── One-time migration: clear legacy untagged events ──
+        # Old versions of this endpoint created events without our trittton tag, then deleted
+        # ALL events in the calendar on each sync. The new code only touches tagged events, so
+        # any user who synced before will see legacy ghost events sitting around. Clean them up,
+        # but ONLY if we're sure we own the calendar (created by us, no trittton-tagged events
+        # yet meaning we've never run the new code here). Never touch a user's personal calendar.
+        legacy_cleared = 0
+        if calendar_created_by_trittton and not existing_trittton:
+            page_token = None
+            while True:
+                params = {"calendarId": cal_id, "maxResults": 250, "showDeleted": False}
+                if page_token:
+                    params["pageToken"] = page_token
+                page = service.events().list(**params).execute()
+                for evt in page.get("items", []):
+                    try:
+                        service.events().delete(calendarId=cal_id, eventId=evt["id"]).execute()
+                        legacy_cleared += 1
+                    except Exception:
+                        pass
+                page_token = page.get("nextPageToken")
+                if not page_token:
+                    break
+
+        # ── Delete events for sections no longer in the schedule ──
+        deleted = 0
+        for sk, eid in existing_trittton.items():
+            if sk not in desired:
+                try:
+                    service.events().delete(calendarId=cal_id, eventId=eid).execute()
+                    deleted += 1
+                except Exception as del_err:
+                    logger.warning("GCal sync: failed to delete event %s: %s", eid, del_err)
+
+        # ── Insert new sections ──
+        created = 0
+        for sk, (course, sec) in desired.items():
+            if sk in existing_trittton:
+                continue  # Already present — leave as-is. (Update path could go here later.)
+
             code = course.get("course_code", "")
             title = course.get("title", "")
             units = course.get("units", 0)
+            days_str = sec.get("days", "")
+            time_str = sec.get("time", "")
+            building = sec.get("building", "")
+            room = sec.get("room", "")
+            instructor = sec.get("instructor", "TBA")
 
-            for sec in course.get("sections", []):
-                days_str = sec.get("days", "")
-                time_str = sec.get("time", "")
-                building = sec.get("building", "")
-                room = sec.get("room", "")
-                instructor = sec.get("instructor", "TBA")
+            rrule_days = _parse_days_gcal(days_str)
+            parsed_time = _parse_time_gcal(time_str)
+            if not parsed_time or not rrule_days:
+                continue
 
-                rrule_days = _parse_days_gcal(days_str)
-                parsed_time = _parse_time_gcal(time_str)
-                if not parsed_time or not rrule_days:
-                    continue
+            sh, sm, eh, em = parsed_time
+            first_date = _find_first_day(start_date, rrule_days[0])
+            location = f"{building} {room} - UC San Diego".strip()
+            summary = f"{code} {sec.get('type', '')} {sec.get('section', '')}"
+            description = (
+                f"{code} - {title}\n"
+                f"{sec.get('type', '')} {sec.get('section', '')}\n"
+                f"Instructor: {instructor}\n"
+                f"{units} units\n\n"
+                f"Created by Trittton — edits made in Trittton will overwrite this event."
+            )
 
-                sh, sm, eh, em = parsed_time
-
-                # Find first occurrence
-                first_date = _find_first_day(start_date, rrule_days[0])
-
-                location = f"{building} {room} - UC San Diego".strip()
-                summary = f"{code} {sec.get('type', '')} {sec.get('section', '')}"
-                description = f"{code} - {title}\n{sec.get('type', '')} {sec.get('section', '')}\nInstructor: {instructor}\n{units} units"
-
-                event = {
-                    "summary": summary,
-                    "description": description,
-                    "location": location,
-                    "start": {
-                        "dateTime": f"{first_date}T{sh:02d}:{sm:02d}:00",
-                        "timeZone": "America/Los_Angeles",
+            event = {
+                "summary": summary,
+                "description": description,
+                "location": location,
+                "start": {
+                    "dateTime": f"{first_date}T{sh:02d}:{sm:02d}:00",
+                    "timeZone": "America/Los_Angeles",
+                },
+                "end": {
+                    "dateTime": f"{first_date}T{eh:02d}:{em:02d}:00",
+                    "timeZone": "America/Los_Angeles",
+                },
+                "recurrence": [
+                    f"RRULE:FREQ=WEEKLY;BYDAY={','.join(rrule_days)};UNTIL={end_date.replace('-', '')}T235959Z"
+                ],
+                "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 15}]},
+                "extendedProperties": {
+                    "private": {
+                        "trittton": "1",
+                        "section_key": sk,
+                        "course_code": code,
+                        "section_type": sec.get("type", ""),
+                        "section": sec.get("section", ""),
+                        "term": term,
                     },
-                    "end": {
-                        "dateTime": f"{first_date}T{eh:02d}:{em:02d}:00",
-                        "timeZone": "America/Los_Angeles",
-                    },
-                    "recurrence": [
-                        f"RRULE:FREQ=WEEKLY;BYDAY={','.join(rrule_days)};UNTIL={end_date.replace('-', '')}T235959Z"
-                    ],
-                    "attendees": [{"email": GCAL_EMAIL}],
-                    "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 15}]},
-                }
-
+                },
+            }
+            try:
                 service.events().insert(calendarId=cal_id, body=event, sendUpdates="none").execute()
                 created += 1
+            except Exception as ins_err:
+                logger.warning("GCal sync: failed to insert %s: %s", sk, ins_err)
 
-        return {"success": True, "calendar": cal_name, "calendar_id": cal_id, "events_created": created}
+        return {
+            "success": True,
+            "calendar": cal_name,
+            "calendar_id": cal_id,
+            "events_created": created,
+            "events_deleted": deleted,
+            "events_total": len(desired),
+            "legacy_cleared": legacy_cleared,
+        }
 
     except Exception as e:
         logger.error("GCal sync error: %s", e)

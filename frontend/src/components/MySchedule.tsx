@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { SavedCourse } from '../hooks/useMySchedule'
 import type { ScheduleProposal } from '../lib/schedule'
 import { buildCalendarBlocks, detectConflicts, assignColors, getUntimedSections } from '../lib/schedule'
@@ -13,17 +13,26 @@ interface MyScheduleProps {
   onRemove: (courseCode: string) => void
   onRemoveSection: (courseCode: string, sectionCode: string, sectionType: string) => void
   onClear: () => void
+  // Term switching support — when provided, an inline term picker is shown.
+  termOptions?: { value: string; label: string }[]
+  onTermChange?: (term: string) => void
+  allSchedules?: Record<string, SavedCourse[]>
 }
 
 // Email fetched dynamically from /api/gcal/status
 
 type GCalStatus = { configured: boolean; connected: boolean; email: string }
 
-export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection, onClear }: MyScheduleProps) {
+// Full-time / overload thresholds used by UCSD undergrad advising.
+const MIN_FULL_TIME_UNITS = 12
+const MAX_NORMAL_UNITS = 18  // Above this requires Dean/college approval
+
+export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection, onClear, termOptions, onTermChange, allSchedules }: MyScheduleProps) {
   const blocks = buildCalendarBlocks(proposal)
   const colors = assignColors(proposal.courses)
   const conflicts = detectConflicts(blocks)
   const untimedSections = getUntimedSections(proposal)
+  const transitions = useMemo(() => findTightTransitions(blocks), [blocks])
   const [gcalStatus, setGcalStatus] = useState<GCalStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
@@ -70,7 +79,12 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
       })
       const data = await res.json()
       if (data.success) {
-        setSyncMsg(`Synced ${data.events_created} events to "${data.calendar}"`)
+        const parts: string[] = []
+        if (data.events_created > 0) parts.push(`added ${data.events_created}`)
+        if (data.events_deleted > 0) parts.push(`removed ${data.events_deleted}`)
+        if (data.legacy_cleared > 0) parts.push(`cleaned ${data.legacy_cleared} legacy`)
+        const change = parts.length > 0 ? parts.join(', ') : 'no changes'
+        setSyncMsg(`Synced "${data.calendar}" — ${change} (${data.events_total} total)`)
       } else {
         setSyncMsg(data.error || 'Sync failed')
       }
@@ -81,10 +95,15 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
     }
   }, [term, schedule])
 
-  // Auto-sync when schedule changes (if connected)
+  // Auto-sync when schedule changes (if connected).
+  // We INTENTIONALLY no longer bail when schedule.length === 0 — an empty schedule
+  // still needs a sync call so the server can delete the events that used to be there.
   const scheduleHash = JSON.stringify(schedule.map((c) => c.course_code + c.sections.length))
+  const initialHashRef = useRef(scheduleHash)
   useEffect(() => {
-    if (!gcalStatus?.connected || schedule.length === 0) return
+    if (!gcalStatus?.connected) return
+    // Skip the very first effect run after mount — that's the initial render, not a user change.
+    if (scheduleHash === initialHashRef.current) return
     // Debounce: sync 2s after last change
     const timer = setTimeout(() => {
       handleGCalSync()
@@ -109,42 +128,90 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
 
   if (schedule.length === 0) {
     return (
-      <div className="h-[calc(100vh-64px)] flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="w-16 h-16 rounded-2xl bg-green/12 flex items-center justify-center mx-auto mb-4">
-            <svg width="32" height="32" fill="none" stroke="#3dd68c" strokeWidth="1.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
-            </svg>
+      <div className="h-[calc(100vh-64px)] overflow-y-auto">
+        <div className="max-w-5xl mx-auto px-3 sm:px-8 py-4 sm:py-8">
+          {termOptions && onTermChange && (
+            <TermSwitcher
+              term={term}
+              termOptions={termOptions}
+              allSchedules={allSchedules}
+              onTermChange={onTermChange}
+            />
+          )}
+          <div className="text-center max-w-md mx-auto mt-12">
+            <div className="w-16 h-16 rounded-2xl bg-green/12 flex items-center justify-center mx-auto mb-4">
+              <svg width="32" height="32" fill="none" stroke="#3dd68c" strokeWidth="1.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-medium text-text mb-2">No courses in {proposal.quarter}</h2>
+            <p className="text-[14px] text-muted leading-relaxed">
+              Add courses from the <b className="text-text">Browse</b> tab using the "+ Add" button,
+              or ask the <b className="text-accent2">AI Planner</b> to build you a schedule.
+            </p>
+            {allSchedules && Object.entries(allSchedules).some(([t, list]) => t !== term && list.length > 0) && (
+              <p className="text-[12px] text-dim mt-4">
+                You have courses saved in other terms — switch above to view them.
+              </p>
+            )}
           </div>
-          <h2 className="text-xl font-medium text-text mb-2">My Schedule is Empty</h2>
-          <p className="text-[13px] text-muted leading-relaxed mb-1">
-            <b className="text-text">{proposal.quarter}</b>
-          </p>
-          <p className="text-[14px] text-muted leading-relaxed">
-            Add courses from the <b className="text-text">Browse</b> tab using the "+ Add" button,
-            or ask the <b className="text-accent2">AI Planner</b> to build you a schedule.
-          </p>
         </div>
       </div>
     )
   }
 
+  // Load warnings — overload above 18 units; under-full-time below 12 units
+  const totalUnits = proposal.total_units
+  const loadWarning: { tone: 'red' | 'gold'; text: string } | null =
+    totalUnits >= MAX_NORMAL_UNITS + 1
+      ? { tone: 'red', text: `${totalUnits} units — overload, needs college approval` }
+      : totalUnits === MAX_NORMAL_UNITS
+      ? { tone: 'gold', text: `${totalUnits} units — at max normal load` }
+      : totalUnits > 0 && totalUnits < MIN_FULL_TIME_UNITS
+      ? { tone: 'gold', text: `${totalUnits} units — below ${MIN_FULL_TIME_UNITS} unit full-time threshold` }
+      : null
+
   return (
     <div className="h-[calc(100vh-64px)] overflow-y-auto">
       <div className="max-w-5xl mx-auto px-3 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
+        {/* Term switcher — inline so user doesn't have to leave the page */}
+        {termOptions && onTermChange && (
+          <TermSwitcher
+            term={term}
+            termOptions={termOptions}
+            allSchedules={allSchedules}
+            onTermChange={onTermChange}
+          />
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-text">My Schedule</h2>
             <div className="flex gap-x-4 gap-y-1 mt-1 text-[11px] text-muted flex-wrap">
               <span className="text-accent">{proposal.quarter}</span>
-              <span><b className="text-text">{proposal.total_units}</b> units</span>
+              <span><b className="text-text">{totalUnits}</b> units</span>
               <span><b className="text-text">{schedule.length}</b> {schedule.length === 1 ? 'course' : 'courses'}</span>
               <span><b className="text-text">{schedule.reduce((s, c) => s + c.sections.length, 0)}</b> {schedule.reduce((s, c) => s + c.sections.length, 0) === 1 ? 'section' : 'sections'}</span>
               {conflicts.length > 0 && (
                 <span className="text-red"><b>{conflicts.length}</b> conflict{conflicts.length !== 1 ? 's' : ''}</span>
               )}
+              {transitions.length > 0 && (
+                <span className="text-gold"><b>{transitions.length}</b> tight transition{transitions.length !== 1 ? 's' : ''}</span>
+              )}
             </div>
+            {loadWarning && (
+              <div className={`mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-medium ${
+                loadWarning.tone === 'red'
+                  ? 'bg-red/10 text-red border-red/20'
+                  : 'bg-gold/10 text-gold border-gold/20'
+              }`}>
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                {loadWarning.text}
+              </div>
+            )}
           </div>
           <div className="flex gap-2 flex-wrap">
             {/* Google Calendar sync */}
@@ -214,6 +281,30 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
 
         {/* Calendar */}
         <WeeklyCalendar blocks={blocks} untimedSections={untimedSections} />
+
+        {/* Tight transition warnings */}
+        {transitions.length > 0 && (
+          <div className="rounded-xl border border-gold/30 bg-gold/5 px-4 py-3">
+            <div className="flex items-center gap-2 mb-2 text-gold font-mono text-[11px] font-medium uppercase tracking-wide">
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 12h15" />
+              </svg>
+              Tight Transitions ({transitions.length})
+            </div>
+            <div className="space-y-1">
+              {transitions.map((t, i) => (
+                <div key={i} className="text-[12px] text-text">
+                  <span className="font-mono text-muted">{t.day}</span>{' '}
+                  <b className="text-accent">{t.fromCode}</b>{' '}<span className="text-muted">({t.fromBuilding})</span>
+                  <span className="text-dim mx-1.5">→</span>
+                  <b className="text-accent">{t.toCode}</b>{' '}<span className="text-muted">({t.toBuilding})</span>
+                  <span className="text-dim ml-2">·</span>{' '}
+                  <span className="text-gold font-mono">{t.gapMinutes} min gap</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Course cards */}
         <div className="space-y-2">
@@ -301,6 +392,102 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
       </div>
     </div>
   )
+}
+
+// ── TermSwitcher ──
+//
+// Renders a compact row of term chips at the top of My Schedule. The current term is highlighted;
+// any term that already has saved courses gets a small dot so users can find them at a glance.
+function TermSwitcher({
+  term,
+  termOptions,
+  allSchedules,
+  onTermChange,
+}: {
+  term: string
+  termOptions: { value: string; label: string }[]
+  allSchedules?: Record<string, SavedCourse[]>
+  onTermChange: (term: string) => void
+}) {
+  return (
+    <div className="-mt-1 flex items-center gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0">
+      <span className="text-[10px] uppercase tracking-wider text-dim shrink-0">Term</span>
+      <div className="flex items-center gap-1.5 shrink-0">
+        {termOptions.map((t) => {
+          const count = allSchedules?.[t.value]?.length ?? 0
+          const isActive = t.value === term
+          return (
+            <button
+              key={t.value}
+              onClick={() => onTermChange(t.value)}
+              className={`relative inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap cursor-pointer transition-all ${
+                isActive
+                  ? 'bg-accent/15 border-accent/40 text-accent shadow-sm'
+                  : 'bg-card border-border text-muted hover:text-text hover:border-border2'
+              }`}
+              title={t.label}
+            >
+              {t.value}
+              {count > 0 && (
+                <span className={`text-[10px] font-mono px-1.5 rounded ${isActive ? 'bg-accent/20 text-accent' : 'bg-bg text-text'}`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Transition detection ──
+//
+// Finds pairs of calendar blocks on the same day where the gap between end-of-one and
+// start-of-the-next is less than 15 minutes AND the buildings differ. UCSD's campus is large enough
+// that ferrying between Warren and Revelle in 10 minutes is realistic only if you sprint.
+interface TightTransition {
+  day: string
+  fromCode: string
+  fromBuilding: string
+  toCode: string
+  toBuilding: string
+  gapMinutes: number
+}
+
+function findTightTransitions(blocks: import('../lib/schedule').CalendarBlock[]): TightTransition[] {
+  const result: TightTransition[] = []
+  // Group by day
+  const byDay = new Map<string, typeof blocks>()
+  for (const b of blocks) {
+    if (!byDay.has(b.day)) byDay.set(b.day, [])
+    byDay.get(b.day)!.push(b)
+  }
+  for (const [day, dayBlocks] of byDay) {
+    const sorted = [...dayBlocks].sort((a, b) => a.startHour - b.startHour)
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const a = sorted[i]
+      const b = sorted[i + 1]
+      const gapHours = b.startHour - a.endHour
+      if (gapHours < 0) continue // overlap (already shown as a conflict)
+      const gapMinutes = Math.round(gapHours * 60)
+      if (gapMinutes >= 15) continue
+      const fromBuilding = (a.building || '').trim()
+      const toBuilding = (b.building || '').trim()
+      if (!fromBuilding || !toBuilding || fromBuilding === toBuilding) continue
+      // Skip TBA placeholders
+      if (fromBuilding === 'TBA' || toBuilding === 'TBA') continue
+      result.push({
+        day,
+        fromCode: a.courseCode,
+        fromBuilding,
+        toCode: b.courseCode,
+        toBuilding,
+        gapMinutes,
+      })
+    }
+  }
+  return result
 }
 
 function generateMyScheduleHtml(proposal: ScheduleProposal, schedule: SavedCourse[]): string {
