@@ -1,7 +1,7 @@
 import { EnrollCountdown } from './EnrollCountdown'
 import { ThemeToggle } from './ThemeToggle'
 
-export type ViewType = 'browse' | 'ai' | 'councillor' | 'schedule' | 'planner' | 'live' | 'scheduler' | 'events' | 'completed' | 'progress' | 'watching' | 'dining' | 'rooms' | 'transit' | 'internships' | 'textbooks' | 'parking'
+export type ViewType = 'browse' | 'ai' | 'schedule' | 'planner' | 'live' | 'scheduler' | 'events' | 'completed' | 'watching' | 'dining' | 'rooms' | 'internships'
 
 interface HeaderProps {
   termOptions: { value: string; label: string }[]

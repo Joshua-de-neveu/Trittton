@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { CompletedCourse } from '../hooks/useCompletedCourses'
 import type { Course } from '../types'
+import { GradProgress } from './GradProgress'
 
 interface CompletedCoursesProps {
   completed: CompletedCourse[]
@@ -8,6 +9,7 @@ interface CompletedCoursesProps {
   onAdd: (course: CompletedCourse) => void
   onRemove: (courseCode: string) => void
   onClear: () => void
+  completedCodes?: string[]
 }
 
 // Validate that input looks like a course code (e.g. "CSE 11", "MATH 20A", "HUM 1")
@@ -22,7 +24,8 @@ function normalizeCourseCode(input: string): string {
   return parts[0].toUpperCase() + ' ' + parts.slice(1).join('').toUpperCase()
 }
 
-export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onClear }: CompletedCoursesProps) {
+export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onClear, completedCodes }: CompletedCoursesProps) {
+  const [tab, setTab] = useState<'history' | 'progress'>('history')
   const [search, setSearch] = useState('')
   const [showManualHint, setShowManualHint] = useState(false)
 
@@ -83,17 +86,22 @@ export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onCle
     bySubject.get(subj)!.push(c)
   }
 
+  if (tab === 'progress') {
+    return (
+      <div className="h-[calc(100vh-64px)] overflow-y-auto">
+        <div className="max-w-5xl mx-auto px-8 pt-6 pb-2">
+          <TabBar tab={tab} onTabChange={setTab} />
+        </div>
+        <GradProgress completedCodes={completedCodes || completed.map(c => c.course_code)} />
+      </div>
+    )
+  }
+
   return (
     <div className="h-[calc(100vh-64px)] overflow-y-auto">
       <div className="max-w-5xl mx-auto px-8 py-8 space-y-6">
-        {/* Header */}
-        <div>
-          <h2 className="text-lg font-semibold text-text">Completed Courses</h2>
-          <p className="text-[13px] text-muted mt-1">
-            Add courses you've already taken. Search from this term's courses, or type any course code
-            (e.g. HUM 1, WCWP 10A) and press Enter to add it manually.
-          </p>
-        </div>
+        {/* Tab toggle */}
+        <TabBar tab={tab} onTabChange={setTab} />
 
         {/* Search & Add */}
         <div className="relative">
@@ -214,6 +222,29 @@ export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onCle
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function TabBar({ tab, onTabChange }: { tab: 'history' | 'progress'; onTabChange: (t: 'history' | 'progress') => void }) {
+  return (
+    <div className="flex gap-1 bg-surface rounded-lg p-1 w-fit">
+      <button
+        onClick={() => onTabChange('history')}
+        className={`px-4 py-1.5 rounded-md text-[13px] font-medium cursor-pointer transition-all ${
+          tab === 'history' ? 'bg-card text-text shadow-sm' : 'text-muted hover:text-text'
+        }`}
+      >
+        Completed Courses
+      </button>
+      <button
+        onClick={() => onTabChange('progress')}
+        className={`px-4 py-1.5 rounded-md text-[13px] font-medium cursor-pointer transition-all ${
+          tab === 'progress' ? 'bg-card text-text shadow-sm' : 'text-muted hover:text-text'
+        }`}
+      >
+        Graduation Progress
+      </button>
     </div>
   )
 }

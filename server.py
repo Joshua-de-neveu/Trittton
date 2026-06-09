@@ -645,8 +645,18 @@ def _build_prompt(req: ChatRequest) -> tuple[str, str]:
     if req.completed_courses:
         completed_context = f"\n\nSTUDENT'S COMPLETED COURSES: {req.completed_courses}\nUse this to check prerequisites. Only recommend courses whose prerequisites the student has completed. If suggesting a course with unmet prerequisites, clearly warn them."
 
+    # Include UCSD knowledge base for general campus questions
+    wiki_context = ""
+    if WIKI_PATH.exists():
+        try:
+            with open(WIKI_PATH, "r") as f:
+                wiki_content = f.read()
+            wiki_context = f"\n\n## UCSD KNOWLEDGE BASE\nYou also know everything about UCSD campus life. If the student asks about housing, dining, transportation, clubs, financial aid, registration, or any campus topic, answer from this knowledge base:\n{wiki_content}"
+        except Exception:
+            pass
+
     reminder = "\n\nREMINDER: When proposing a complete schedule, you MUST output it inside a ```schedule-json code fence with the exact JSON structure specified above. This is critical — the frontend renders a visual weekly calendar from this data."
-    full_system = f"{system_prompt}{course_context}{completed_context}{reminder}"
+    full_system = f"{system_prompt}{course_context}{completed_context}{wiki_context}{reminder}"
     return full_system, conversation
 
 
@@ -2678,6 +2688,10 @@ def _scrape_hdh_venue(session, loc_id: str, loc_config: dict) -> dict | None:
                     nutrition_href = name_link.get("href", "")
                     has_nutrition_link = bool(nutrition_href and "Nutrition" in nutrition_href)
 
+                    # Skip items without nutrition pages (toppings, condiments, add-ons)
+                    if not has_nutrition_link:
+                        continue
+
                     idx = len(raw_items)
                     raw_items.append({
                         "name": item_name,
@@ -2685,11 +2699,11 @@ def _scrape_hdh_venue(session, loc_id: str, loc_config: dict) -> dict | None:
                         "price": price,
                         "tags": tags,
                         "station": station_name,
-                        "nutrition_href": nutrition_href if has_nutrition_link else "",
+                        "nutrition_href": nutrition_href,
                     })
                     meals_structure[meal_name].append(idx)
 
-                    if has_nutrition_link and nutrition_href not in all_nutrition_hrefs:
+                    if nutrition_href not in all_nutrition_hrefs:
                         all_nutrition_hrefs.append(nutrition_href)
 
         if not raw_items:
@@ -2712,11 +2726,12 @@ def _scrape_hdh_venue(session, loc_id: str, loc_config: dict) -> dict | None:
                     protein = real_macros.get("protein", 0)
                     carbs = real_macros.get("carbs", 0)
                     fat = real_macros.get("fat", 0)
-                    # Recalculate calories from macros for consistency
-                    item["calories"] = protein * 4 + carbs * 4 + fat * 9
+                    # Use real calorie count from page, or recalculate from macros
+                    calc_cal = protein * 4 + carbs * 4 + fat * 9
+                    item["calories"] = calc_cal if calc_cal > 0 else item["calories"]
                     nutrition_source = "hdh"
                 else:
-                    # Fallback: estimate macros from calories
+                    # Nutrition page fetch failed — estimate from listed calories
                     calories = item["calories"]
                     protein = 0
                     carbs = 0

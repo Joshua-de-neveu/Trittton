@@ -10,7 +10,7 @@ import { ScrapePanel } from './components/ScrapePanel'
 import { ChatPanel } from './components/ChatPanel'
 import { MySchedule } from './components/MySchedule'
 import { CompletedCourses } from './components/CompletedCourses'
-import { GradProgress } from './components/GradProgress'
+// GradProgress is now embedded inside CompletedCourses
 import { useCourseData } from './hooks/useCourseData'
 import { useFilters } from './hooks/useFilters'
 import { useClientScraper } from './hooks/useClientScraper'
@@ -24,7 +24,6 @@ import { FourYearPlan } from './components/FourYearPlan'
 import { LiveStatus } from './components/LiveStatus'
 import { AutoScheduler } from './components/AutoScheduler'
 import { EventsCalendar } from './components/EventsCalendar'
-import { Councillor } from './components/Councillor'
 import { LoginPage } from './components/LoginPage'
 import { ApiKeyOverlay } from './components/ApiKeyOverlay'
 import { useGoogleAuth, getGeminiKey, setGeminiKey } from './hooks/useGoogleAuth'
@@ -32,10 +31,7 @@ import { useSeatWatch } from './hooks/useSeatWatch'
 import { WatchList } from './components/WatchList'
 import { Dining } from './components/Dining'
 import { RoomFinder } from './components/RoomFinder'
-import { Transit } from './components/Transit'
 import { Internships } from './components/Internships'
-import { Textbooks } from './components/Textbooks'
-import { Parking } from './components/Parking'
 import { useTheme } from './components/ThemeToggle'
 
 export default function App() {
@@ -232,8 +228,6 @@ function AuthenticatedApp({
   }, [])
 
   const renderContent = () => {
-    if (activeView === 'councillor')
-      return <Councillor model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />
     if (activeView === 'ai' && isLoaded)
       return <ChatPanel messages={messages} isStreaming={isStreaming} thinkingPhase={thinkingPhase} error={chatError}
         onSend={handleChatSend} onClear={clearChat} onAddToSchedule={mySchedule.addFromProposal}
@@ -245,10 +239,8 @@ function AuthenticatedApp({
       return <FourYearPlan plan={fourYearPlan.plan} allCourses={courses} onAddCourse={fourYearPlan.addCourse}
         onRemoveCourse={(quarter, courseCode) => {
           fourYearPlan.removeCourse(quarter, courseCode)
-          // Also remove from My Schedule if it's in the current term's schedule
           if (quarter === term) mySchedule.removeCourse(courseCode)
         }} onClearQuarter={(quarter) => {
-          // Get courses before clearing so we can remove them from schedule
           const q = fourYearPlan.plan.find(p => p.quarter === quarter)
           fourYearPlan.clearQuarter(quarter)
           if (quarter === term && q) {
@@ -256,7 +248,6 @@ function AuthenticatedApp({
           }
         }}
         onClearAll={() => {
-          // Remove current term's planned courses from schedule
           const currentQ = fourYearPlan.plan.find(p => p.quarter === term)
           fourYearPlan.clearAll()
           if (currentQ) {
@@ -268,10 +259,7 @@ function AuthenticatedApp({
       return <AutoScheduler model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />
     if (activeView === 'events') return <EventsCalendar />
     if (activeView === 'rooms') return <RoomFinder />
-    if (activeView === 'transit') return <Transit />
     if (activeView === 'internships') return <Internships />
-    if (activeView === 'textbooks') return <Textbooks />
-    if (activeView === 'parking') return <Parking />
     if (activeView === 'dining')
       return <Dining model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />
     if (activeView === 'watching')
@@ -280,11 +268,10 @@ function AuthenticatedApp({
         courses={courses} getRating={getRating} onAddToSchedule={mySchedule.addCourse} hasCourse={mySchedule.hasCourse}
         hasSection={mySchedule.hasSection} hasCompleted={completedCourses.hasCompleted}
         isWatching={seatWatch.isWatching} onWatch={seatWatch.addWatch} />
-    if (activeView === 'progress' && isLoaded)
-      return <GradProgress completedCodes={completedCourses.completed.map((c) => c.course_code)} />
     if (activeView === 'completed' && isLoaded)
       return <CompletedCourses completed={completedCourses.completed} allCourses={courses}
-        onAdd={completedCourses.addCourse} onRemove={completedCourses.removeCourse} onClear={completedCourses.clearAll} />
+        onAdd={completedCourses.addCourse} onRemove={completedCourses.removeCourse} onClear={completedCourses.clearAll}
+        completedCodes={completedCourses.completed.map((c) => c.course_code)} />
 
     // Browse view (default)
     if (!isLoaded) return <ScrapeLoadingScreen progress={progress} error={error} onRetry={() => startScrape(term)} />

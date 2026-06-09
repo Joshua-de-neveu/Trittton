@@ -158,7 +158,7 @@ export function GradProgress({ completedCodes }: GradProgressProps) {
               )}
             </div>
             <div className="text-[13px] text-muted mt-1">
-              {completedCodes.length} courses completed &middot; Add more in the History tab
+              {completedCodes.length} courses completed &middot; Switch to "Completed Courses" tab to add more
             </div>
           </div>
           <button
