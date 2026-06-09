@@ -2525,17 +2525,24 @@ def _scrape_nutrition_detail(href: str) -> dict | None:
         #   tot. carb. 41.0 g      (abbreviated, not "total carbohydrate")
         result = {}
 
+        # Try multiple regex patterns for each macro (HDH pages vary in format)
         protein_m = _re.search(r"protein\s+([\d.]+)\s*g", text)
+        if not protein_m:
+            protein_m = _re.search(r"protein.*?(\d+\.?\d*)\s*g", text)
         if protein_m:
             result["protein"] = round(float(protein_m.group(1)))
 
-        # HDH uses "tot. carb." not "total carbohydrate"
-        carbs_m = _re.search(r"tot(?:al|\.)\s*carb\.?\s+([\d.]+)\s*g", text)
+        # HDH uses "tot. carb." or "total carbohydrate" or "total carb"
+        carbs_m = _re.search(r"tot(?:al|\.)\s*carb(?:ohydrate)?\.?\s+([\d.]+)\s*g", text)
+        if not carbs_m:
+            carbs_m = _re.search(r"carb(?:ohydrate)?.*?(\d+\.?\d*)\s*g", text)
         if carbs_m:
             result["carbs"] = round(float(carbs_m.group(1)))
 
         # HDH has &nbsp; (now space) between "total fat" and the number
         fat_m = _re.search(r"total\s+fat\s+([\d.]+)\s*g", text)
+        if not fat_m:
+            fat_m = _re.search(r"total\s+fat.*?(\d+\.?\d*)\s*g", text)
         if fat_m:
             result["fat"] = round(float(fat_m.group(1)))
 
@@ -4630,7 +4637,7 @@ def _scrape_linkedin_jobs(keywords: str, location: str = "San Diego", count: int
     for start in range(0, count, 25):
         url = (
             f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-            f"?keywords={keywords}&location={location}&start={start}"
+            f"?keywords={keywords}&location={location}&f_E=1&start={start}"
         )
         try:
             resp = req_lib.get(url, headers={
@@ -4662,6 +4669,7 @@ def _scrape_linkedin_jobs(keywords: str, location: str = "San Diego", count: int
                     "url": (link_el.get("href", "").split("?")[0]) if link_el else "",
                     "date": date_el.get("datetime", "") if date_el else "",
                     "logo": (logo_el.get("data-delayed-url", "") or logo_el.get("src", "")) if logo_el else "",
+                    "source": "linkedin",
                 }
                 all_jobs.append(job)
         except Exception as e:
@@ -4669,6 +4677,92 @@ def _scrape_linkedin_jobs(keywords: str, location: str = "San Diego", count: int
             break
 
     return all_jobs
+
+
+def _scrape_indeed_jobs(keywords: str, location: str = "San Diego", count: int = 30) -> list:
+    """Scrape Indeed public job listings for internships."""
+    import requests as req_lib
+    from bs4 import BeautifulSoup
+
+    all_jobs = []
+    query = keywords.replace("+", " ")
+    for start in range(0, count, 10):
+        url = f"https://www.indeed.com/jobs?q={query}&l={location}&sc=0kf%3Ajt%28internship%29%3B&start={start}"
+        try:
+            resp = req_lib.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            }, timeout=15)
+            if resp.status_code != 200:
+                break
+            soup = BeautifulSoup(resp.text, "lxml")
+            cards = soup.find_all("div", class_="job_seen_beacon")
+            if not cards:
+                # Try alternate selector
+                cards = soup.find_all("td", class_="resultContent")
+            if not cards:
+                break
+
+            for card in cards:
+                title_el = card.find("h2", class_="jobTitle") or card.find("a", attrs={"data-jk": True})
+                company_el = card.find("span", attrs={"data-testid": "company-name"}) or card.find("span", class_="companyName")
+                location_el = card.find("div", attrs={"data-testid": "text-location"}) or card.find("div", class_="companyLocation")
+                link_el = card.find("a", class_="jcs-JobTitle") or card.find("a", href=True)
+
+                title = title_el.get_text(strip=True) if title_el else ""
+                if not title:
+                    continue
+
+                href = ""
+                if link_el:
+                    raw = link_el.get("href", "")
+                    href = f"https://www.indeed.com{raw}" if raw.startswith("/") else raw
+
+                job = {
+                    "title": title,
+                    "company": company_el.get_text(strip=True) if company_el else "",
+                    "location": location_el.get_text(strip=True) if location_el else "",
+                    "url": href,
+                    "date": "",
+                    "logo": "",
+                    "source": "indeed",
+                }
+                all_jobs.append(job)
+        except Exception as e:
+            logger.warning("Indeed scrape page %d failed: %s", start, e)
+            break
+
+    return all_jobs
+
+
+def _scrape_all_internships(keywords: str, location: str = "San Diego") -> list:
+    """Scrape internships from multiple job sites and merge results."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    results = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        linkedin_fut = pool.submit(_scrape_linkedin_jobs, keywords, location, 50)
+        indeed_fut = pool.submit(_scrape_indeed_jobs, keywords, location, 30)
+
+        try:
+            results.extend(linkedin_fut.result(timeout=20))
+        except Exception:
+            pass
+        try:
+            results.extend(indeed_fut.result(timeout=20))
+        except Exception:
+            pass
+
+    # Deduplicate by (title, company) — keep first occurrence
+    seen = set()
+    deduped = []
+    for job in results:
+        key = (job["title"].lower().strip(), job["company"].lower().strip())
+        if key not in seen:
+            seen.add(key)
+            deduped.append(job)
+
+    return deduped
 
 
 @app.get("/api/internships/fields")
@@ -4711,8 +4805,8 @@ def internship_search(
             "cached": True,
         }
 
-    # Scrape
-    jobs = _scrape_linkedin_jobs(search_keywords, location, count=50)
+    # Scrape from multiple sources
+    jobs = _scrape_all_internships(search_keywords, location)
     _internship_cache[cache_key] = {"data": jobs, "ts": now}
 
     return {

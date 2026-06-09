@@ -197,14 +197,14 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
 
   if (loading) {
     return (
-      <div className="h-[calc(100vh-56px)] flex items-center justify-center">
+      <div className="h-[calc(100vh-64px)] flex items-center justify-center">
         <span className="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin block" />
       </div>
     )
   }
 
   return (
-    <div className="h-[calc(100vh-56px)] flex">
+    <div className="h-[calc(100vh-64px)] flex">
       {/* ═══ LEFT — Dining Hall List ═══ */}
       <div className="w-72 shrink-0 border-r border-border bg-surface flex flex-col overflow-hidden">
         <div className="px-4 pt-4 pb-3">
@@ -441,13 +441,17 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
                               {/* Bottom: Macros */}
                               <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-3 text-[12px] flex-wrap">
-                                  <span className="font-bold text-text tabular-nums">{item.calories} <span className="text-[10px] text-muted font-normal">cal</span></span>
-                                  <span className="font-semibold text-accent tabular-nums">{item.protein}g <span className="text-[10px] text-muted font-normal">protein</span></span>
-                                  <span className="font-semibold text-gold tabular-nums">{item.carbs}g <span className="text-[10px] text-muted font-normal">carbs</span></span>
-                                  <span className="font-semibold text-red tabular-nums">{item.fat}g <span className="text-[10px] text-muted font-normal">fat</span></span>
+                                  <span className="font-bold text-text tabular-nums">{Math.round(item.calories)} <span className="text-[10px] text-muted font-normal">cal</span></span>
+                                  <span className="font-semibold text-accent tabular-nums">{item.protein}g <span className="text-[10px] text-muted font-normal">P</span></span>
+                                  <span className="font-semibold text-gold tabular-nums">{item.carbs}g <span className="text-[10px] text-muted font-normal">C</span></span>
+                                  <span className="font-semibold text-red tabular-nums">{item.fat}g <span className="text-[10px] text-muted font-normal">F</span></span>
                                 </div>
 
                                 <div className="flex-1" />
+
+                                {item.nutrition_source && item.nutrition_source !== 'hdh' && (
+                                  <span className="text-[9px] text-dim italic shrink-0" title="Nutrition estimated from calorie count">~est</span>
+                                )}
 
                                 {/* Visual macro bar */}
                                 <div className="w-16 h-2 rounded-full overflow-hidden flex shrink-0">

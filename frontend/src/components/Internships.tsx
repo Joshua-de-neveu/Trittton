@@ -41,6 +41,7 @@ interface Job {
   url: string
   date: string
   logo: string
+  source?: 'linkedin' | 'indeed'
 }
 
 interface JobDetail {
@@ -241,7 +242,7 @@ export function Internships() {
         </div>
 
         <div className="border-t border-border px-4 py-2.5">
-          <div className="text-[10px] text-dim">LinkedIn listings &middot; Updated hourly</div>
+          <div className="text-[10px] text-dim">LinkedIn + Indeed &middot; Updated hourly</div>
         </div>
       </div>
 
@@ -308,6 +309,14 @@ export function Internships() {
                             <span className="text-[10px] text-dim">{timeAgo(job.date)}</span>
                           </>
                         )}
+                        {job.source && (
+                          <>
+                            <span className="text-dim text-[8px]">{'\u00b7'}</span>
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                              job.source === 'linkedin' ? 'bg-[#0a66c2]/10 text-[#0a66c2]' : 'bg-[#2164f3]/10 text-[#2164f3]'
+                            }`}>{job.source === 'linkedin' ? 'LinkedIn' : 'Indeed'}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -354,7 +363,7 @@ export function Internships() {
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
               </svg>
-              Apply on LinkedIn
+              Apply on {selectedJob.source === 'indeed' ? 'Indeed' : 'LinkedIn'}
             </a>
 
             {/* Criteria tags */}
