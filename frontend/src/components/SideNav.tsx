@@ -33,6 +33,7 @@ const GROUPS: (scheduleCount: number, completedCount: number, watchCount: number
       { view: 'schedule', label: 'My Schedule', icon: <CalendarIcon />, badge: scheduleCount },
       { view: 'watching', label: 'Seat Alerts', icon: <BellIcon />, badge: watchCount },
       { view: 'planner', label: '4-Year Plan', icon: <AcademicIcon /> },
+      { view: 'prereqs', label: 'Prereq Chains', icon: <TreeIcon /> },
     ],
   },
   {
@@ -217,6 +218,9 @@ function DiningIcon() {
 }
 function BellIcon() {
   return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" /></svg>
+}
+function TreeIcon() {
+  return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v0a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 6zm0 0h-1.5m1.5 0v0M10.5 6h3m0 0v6m0-6h3.75A2.25 2.25 0 0119.5 8.25v0a2.25 2.25 0 01-2.25 2.25H13.5m0 0v0m0 6v0m0 0H9.75a2.25 2.25 0 01-2.25-2.25v0A2.25 2.25 0 019.75 9.75H13.5m0 2.25h3.75a2.25 2.25 0 012.25 2.25v0a2.25 2.25 0 01-2.25 2.25H13.5" /></svg>
 }
 function BuildingIcon() {
   return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3 0h.008v.008H18V7.5z" /></svg>
