@@ -131,23 +131,29 @@ interface DiningProps {
 export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey: _geminiKey, onRequestKey: _onRequestKey }: DiningProps) {
   const [menus, setMenus] = useState<Record<string, LocationMenu>>({})
   const [loading, setLoading] = useState(true)
+  const [isLive, setIsLive] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [selectedHallId, setSelectedHallId] = useState('')
   const [selectedMeal, setSelectedMeal] = useState<MealPeriod>(getCurrentMealPeriod)
   const [selectedStation, setSelectedStation] = useState('')
   const [search, setSearch] = useState('')
 
-  useEffect(() => {
-    setLoading(true)
-    fetch('/api/dining/menus')
+  const fetchMenus = (refresh = false) => {
+    if (refresh) setRefreshing(true)
+    else setLoading(true)
+    fetch(`/api/dining/menus${refresh ? '?refresh=true' : ''}`)
       .then(r => r.json())
       .then(d => {
         setMenus(d.menus || {})
+        setIsLive(d.is_live || false)
         const ids = Object.keys(d.menus || {})
         if (ids.length > 0 && !selectedHallId) setSelectedHallId(ids[0])
       })
       .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => { setLoading(false); setRefreshing(false) })
+  }
+
+  useEffect(() => { fetchMenus() }, [])
 
   const hallIds = Object.keys(menus)
   const hall = menus[selectedHallId]
@@ -208,8 +214,25 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
       {/* ═══ LEFT — Dining Hall List ═══ */}
       <div className="w-72 shrink-0 border-r border-border bg-surface flex flex-col overflow-hidden">
         <div className="px-4 pt-4 pb-3">
-          <h2 className="text-base font-bold text-text">Dining Halls</h2>
-          <div className="text-[11px] text-muted mt-0.5">{hallIds.length} locations on campus</div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-text">Dining Halls</h2>
+            <button
+              onClick={() => fetchMenus(true)}
+              disabled={refreshing}
+              className="text-[10px] px-2 py-1 rounded-lg bg-card border border-border text-muted
+                hover:text-text hover:border-border2 cursor-pointer disabled:opacity-50"
+              title="Refresh menus from HDH"
+            >
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
+          <div className="text-[11px] text-muted mt-0.5">
+            {hallIds.length} locations
+            {isLive
+              ? <span className="text-green ml-1.5 font-medium">Live from HDH</span>
+              : <span className="text-gold ml-1.5">Sample data</span>
+            }
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {hallIds.map(id => {
@@ -449,9 +472,13 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
 
                                 <div className="flex-1" />
 
-                                {item.nutrition_source && item.nutrition_source !== 'hdh' && (
+                                {item.nutrition_source === 'hdh' ? (
+                                  <span className="text-[9px] text-green/60 shrink-0" title="Real nutrition data from HDH">HDH</span>
+                                ) : item.nutrition_source === 'sample' ? (
+                                  <span className="text-[9px] text-gold/60 shrink-0" title="Sample data — hit Refresh for live menus">sample</span>
+                                ) : item.nutrition_source === 'estimated' ? (
                                   <span className="text-[9px] text-dim italic shrink-0" title="Nutrition estimated from calorie count">~est</span>
-                                )}
+                                ) : null}
 
                                 {/* Visual macro bar */}
                                 <div className="w-16 h-2 rounded-full overflow-hidden flex shrink-0">

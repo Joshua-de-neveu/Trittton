@@ -2508,9 +2508,8 @@ def _scrape_nutrition_detail(href: str) -> dict | None:
 
     try:
         import requests as _req
-        time.sleep(0.15)  # Be respectful of HDH servers
         url = _HDH_BASE_URL + href if href.startswith("/") else href
-        resp = _req.get(url, timeout=15, headers={
+        resp = _req.get(url, timeout=10, headers={
             "User-Agent": "Mozilla/5.0 (compatible; TritonCourses/1.0; educational)",
         })
         resp.raise_for_status()
@@ -2561,8 +2560,8 @@ def _scrape_nutrition_detail(href: str) -> dict | None:
 def _batch_fetch_nutrition(hrefs: list[str]) -> dict[str, dict]:
     """Fetch nutrition details for multiple items concurrently.
 
-    Uses ThreadPoolExecutor with 10 workers to fetch ~170 nutrition pages
-    in ~30s instead of ~50s sequentially. Returns {href: {protein, carbs, fat}}.
+    Uses ThreadPoolExecutor with 20 workers to fetch ~135 nutrition pages
+    in ~3s. Returns {href: {protein, carbs, fat}}.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2583,7 +2582,7 @@ def _batch_fetch_nutrition(hrefs: list[str]) -> dict[str, dict]:
     def fetch_one(href: str) -> tuple[str, dict | None]:
         return href, _scrape_nutrition_detail(href)
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=20) as pool:
         futures = {pool.submit(fetch_one, h): h for h in uncached}
         done_count = 0
         for future in as_completed(futures):
@@ -2827,7 +2826,9 @@ def _scrape_all_hdh_menus() -> dict:
 def _refresh_dining_cache():
     """Refresh dining cache if stale. Called from endpoints and background thread."""
     now = time.time()
-    if _dining_cache["menus"] and (now - _dining_cache["ts"]) < DINING_TTL:
+    # Use shorter TTL if we only have sample/fallback data (retry sooner)
+    effective_ttl = DINING_TTL if _dining_cache.get("scraped") else 300  # 5 min for sample data
+    if _dining_cache["menus"] and (now - _dining_cache["ts"]) < effective_ttl:
         return  # Cache is fresh
     if _dining_cache["scraping"]:
         return  # Already scraping
@@ -2839,6 +2840,7 @@ def _refresh_dining_cache():
         if result:
             _dining_cache["menus"] = result
             _dining_cache["ts"] = time.time()
+            _dining_cache["scraped"] = True
             logger.info("Dining cache refreshed: %d locations", len(result))
         else:
             # If scrape totally failed and we have no cache, use sample data
@@ -2846,6 +2848,7 @@ def _refresh_dining_cache():
                 logger.warning("HDH scrape failed, loading sample data")
                 _dining_cache["menus"] = _build_sample_menu_response()
                 _dining_cache["ts"] = time.time()
+                _dining_cache["scraped"] = False
     finally:
         _dining_cache["scraping"] = False
 
@@ -3233,6 +3236,7 @@ def dining_menus(location: str = Query(default=""), refresh: bool = Query(defaul
     return {
         "menus": cached,
         "last_updated": last_updated,
+        "is_live": bool(_dining_cache.get("scraped")),
     }
 
 
