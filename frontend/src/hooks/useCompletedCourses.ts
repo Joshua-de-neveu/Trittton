@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useCloudSync, type CloudSyncStatus } from './useCloudSync'
 
 const STORAGE_KEY = 'ucsd-completed-courses'
 
@@ -16,12 +17,25 @@ function loadFromStorage(): CompletedCourse[] {
   }
 }
 
-export function useCompletedCourses() {
+export function useCompletedCourses(uid: string | null = null) {
   const [completed, setCompleted] = useState<CompletedCourse[]>(loadFromStorage)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(completed))
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(completed))
+    } catch (e) {
+      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+        console.warn('[useCompletedCourses] localStorage quota exceeded')
+      }
+    }
   }, [completed])
+
+  const cloudStatus: CloudSyncStatus = useCloudSync<CompletedCourse[]>({
+    uid,
+    key: 'completed-courses',
+    value: completed,
+    applyRemote: (remote) => setCompleted(Array.isArray(remote) ? remote : []),
+  })
 
   const addCourse = useCallback((course: CompletedCourse) => {
     setCompleted((prev) => {
@@ -38,6 +52,11 @@ export function useCompletedCourses() {
     setCompleted([])
   }, [])
 
+  // Restore a previous snapshot — used by Undo on Clear.
+  const restoreAll = useCallback((prev: CompletedCourse[]) => {
+    setCompleted(prev)
+  }, [])
+
   const hasCompleted = useCallback(
     (courseCode: string) => completed.some((c) => c.course_code === courseCode),
     [completed],
@@ -49,5 +68,5 @@ export function useCompletedCourses() {
     return completed.map((c) => c.course_code).join(', ')
   }, [completed])
 
-  return { completed, addCourse, removeCourse, clearAll, hasCompleted, asContextString }
+  return { completed, addCourse, removeCourse, clearAll, restoreAll, hasCompleted, asContextString, cloudStatus }
 }

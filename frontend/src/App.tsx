@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react'
 import { Header } from './components/Header'
 import type { ViewType } from './components/Header'
 import { SideNav } from './components/SideNav'
@@ -7,10 +7,11 @@ import { FilterBar } from './components/FilterBar'
 import type { ScrapeProgress } from './types'
 import { CourseList } from './components/CourseList'
 import { ScrapePanel } from './components/ScrapePanel'
-import { ChatPanel } from './components/ChatPanel'
-import { MySchedule } from './components/MySchedule'
-import { CompletedCourses } from './components/CompletedCourses'
-// GradProgress is now embedded inside CompletedCourses
+// Browse is the default view — its components stay eagerly imported.
+// Everything below is loaded on demand to keep the initial bundle small.
+const ChatPanel = lazy(() => import('./components/ChatPanel').then((m) => ({ default: m.ChatPanel })))
+const MySchedule = lazy(() => import('./components/MySchedule').then((m) => ({ default: m.MySchedule })))
+const CompletedCourses = lazy(() => import('./components/CompletedCourses').then((m) => ({ default: m.CompletedCourses })))
 import { useCourseData } from './hooks/useCourseData'
 import { useFilters } from './hooks/useFilters'
 import { useClientScraper } from './hooks/useClientScraper'
@@ -20,20 +21,30 @@ import { useCompletedCourses } from './hooks/useCompletedCourses'
 import { setCurrentTerm, setTermOptions, TERM_OPTIONS } from './lib/links'
 import { useRmpRatings } from './hooks/useRmpRatings'
 import { useFourYearPlan } from './hooks/useFourYearPlan'
-import { FourYearPlan } from './components/FourYearPlan'
-import { LiveStatus } from './components/LiveStatus'
-import { AutoScheduler } from './components/AutoScheduler'
-import { EventsCalendar } from './components/EventsCalendar'
+const FourYearPlan = lazy(() => import('./components/FourYearPlan').then((m) => ({ default: m.FourYearPlan })))
+const LiveStatus = lazy(() => import('./components/LiveStatus').then((m) => ({ default: m.LiveStatus })))
+const AutoScheduler = lazy(() => import('./components/AutoScheduler').then((m) => ({ default: m.AutoScheduler })))
+const EventsCalendar = lazy(() => import('./components/EventsCalendar').then((m) => ({ default: m.EventsCalendar })))
 import { LoginPage } from './components/LoginPage'
 import { ApiKeyOverlay } from './components/ApiKeyOverlay'
 import { useGoogleAuth, getGeminiKey, setGeminiKey } from './hooks/useGoogleAuth'
 import { useSeatWatch } from './hooks/useSeatWatch'
-import { WatchList } from './components/WatchList'
-import { Dining } from './components/Dining'
-import { RoomFinder } from './components/RoomFinder'
-import { Internships } from './components/Internships'
-// PrereqVisualizer is now integrated into CompletedCourses
+const WatchList = lazy(() => import('./components/WatchList').then((m) => ({ default: m.WatchList })))
+const Dining = lazy(() => import('./components/Dining').then((m) => ({ default: m.Dining })))
+const RoomFinder = lazy(() => import('./components/RoomFinder').then((m) => ({ default: m.RoomFinder })))
+const Internships = lazy(() => import('./components/Internships').then((m) => ({ default: m.Internships })))
+const PrereqChains = lazy(() => import('./components/PrereqChains').then((m) => ({ default: m.PrereqChains })))
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { ToastProvider, useToast } from './components/Toast'
 import { useTheme } from './components/ThemeToggle'
+
+function ViewLoader() {
+  return (
+    <div className="h-full flex items-center justify-center">
+      <span className="w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin block" />
+    </div>
+  )
+}
 
 export default function App() {
   const { user, loading, signIn, logOut, authError } = useGoogleAuth()
@@ -76,18 +87,19 @@ export default function App() {
   }
 
   return (
-    <>
+    <ToastProvider>
       {showKeyOverlay && <ApiKeyOverlay onSubmit={handleSaveKey} />}
       <AuthenticatedApp
         onLogout={logOut}
         geminiKey={geminiKey}
         onRequestKey={handleRequestKey}
+        uid={user.uid}
         userDisplayName={user.displayName}
         userPhotoURL={user.photoURL}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
-    </>
+    </ToastProvider>
   )
 }
 
@@ -95,6 +107,7 @@ function AuthenticatedApp({
   onLogout,
   geminiKey,
   onRequestKey,
+  uid,
   userDisplayName,
   userPhotoURL,
   theme,
@@ -103,6 +116,7 @@ function AuthenticatedApp({
   onLogout: () => void
   geminiKey: string | null
   onRequestKey: () => void
+  uid: string
   userDisplayName: string | null
   userPhotoURL: string | null
   theme: 'dark' | 'light'
@@ -130,11 +144,24 @@ function AuthenticatedApp({
   }, [loadFromData])
 
   const { progress, showPanel, setShowPanel, startScrape } = useClientScraper(handleScrapeComplete)
-  const { messages, isStreaming, thinkingPhase, error: chatError, sendMessage, clearChat } = useChat()
-  const mySchedule = useMySchedule(term)
-  const completedCourses = useCompletedCourses()
+  const { messages, isStreaming, thinkingPhase, error: chatError, sendMessage, clearChat, restoreChat } = useChat()
+  const { showToast } = useToast()
+  const mySchedule = useMySchedule(term, uid)
+  const completedCourses = useCompletedCourses(uid)
   const { getRating } = useRmpRatings(courses)
-  const fourYearPlan = useFourYearPlan()
+  const fourYearPlan = useFourYearPlan(uid)
+
+  // Coalesce the three sync statuses into one header indicator.
+  // Priority: error > syncing > loading > synced > offline > idle.
+  const cloudStatus = (() => {
+    const all = [mySchedule.cloudStatus, completedCourses.cloudStatus, fourYearPlan.cloudStatus]
+    if (all.includes('error')) return 'error'
+    if (all.includes('syncing')) return 'syncing'
+    if (all.includes('loading')) return 'loading'
+    if (all.every((s) => s === 'synced')) return 'synced'
+    if (all.includes('offline')) return 'offline'
+    return 'idle'
+  })()
   const seatWatch = useSeatWatch(term)
 
   const [termOptions, setTermOpts] = useState(TERM_OPTIONS)
@@ -228,39 +255,101 @@ function AuthenticatedApp({
     })
   }, [])
 
+  // Destructive actions with undo — snapshot state, run, then offer Undo.
+  const handleClearChat = useCallback(() => {
+    if (messages.length === 0) { clearChat(); return }
+    const snapshot = messages
+    clearChat()
+    showToast({
+      message: `Cleared ${snapshot.length} chat message${snapshot.length === 1 ? '' : 's'}`,
+      undo: () => restoreChat(snapshot),
+    })
+  }, [messages, clearChat, restoreChat, showToast])
+
+  const handleClearSchedule = useCallback(() => {
+    const snapshot = mySchedule.schedule
+    if (snapshot.length === 0) { mySchedule.clearSchedule(); return }
+    mySchedule.clearSchedule()
+    showToast({
+      message: `Cleared ${snapshot.length} course${snapshot.length === 1 ? '' : 's'} from My Schedule`,
+      undo: () => mySchedule.restoreSchedule(snapshot),
+    })
+  }, [mySchedule, showToast])
+
+  const handleClearCompleted = useCallback(() => {
+    const snapshot = completedCourses.completed
+    if (snapshot.length === 0) { completedCourses.clearAll(); return }
+    completedCourses.clearAll()
+    showToast({
+      message: `Cleared ${snapshot.length} completed course${snapshot.length === 1 ? '' : 's'}`,
+      undo: () => completedCourses.restoreAll(snapshot),
+    })
+  }, [completedCourses, showToast])
+
+  const handleClearQuarter = useCallback((quarter: string) => {
+    const snapshot = fourYearPlan.plan
+    const q = snapshot.find((p) => p.quarter === quarter)
+    fourYearPlan.clearQuarter(quarter)
+    if (quarter === term && q) {
+      for (const c of q.courses) mySchedule.removeCourse(c.course_code)
+    }
+    if (q && q.courses.length > 0) {
+      const myScheduleSnapshot = mySchedule.schedule
+      showToast({
+        message: `Cleared ${q.courses.length} course${q.courses.length === 1 ? '' : 's'} from ${q.label}`,
+        undo: () => {
+          fourYearPlan.restorePlan(snapshot)
+          if (quarter === term) mySchedule.restoreSchedule(myScheduleSnapshot)
+        },
+      })
+    }
+  }, [fourYearPlan, mySchedule, term, showToast])
+
+  const handleClearAllPlan = useCallback(() => {
+    const planSnapshot = fourYearPlan.plan
+    const myScheduleSnapshot = mySchedule.schedule
+    const currentQ = planSnapshot.find((p) => p.quarter === term)
+    const totalCourses = planSnapshot.reduce((sum, p) => sum + p.courses.length, 0)
+    fourYearPlan.clearAll()
+    if (currentQ) {
+      for (const c of currentQ.courses) mySchedule.removeCourse(c.course_code)
+    }
+    if (totalCourses > 0) {
+      showToast({
+        message: `Cleared 4-year plan (${totalCourses} courses)`,
+        undo: () => {
+          fourYearPlan.restorePlan(planSnapshot)
+          mySchedule.restoreSchedule(myScheduleSnapshot)
+        },
+      })
+    }
+  }, [fourYearPlan, mySchedule, term, showToast])
+
   const renderContent = () => {
     if (activeView === 'ai' && isLoaded)
       return <ChatPanel messages={messages} isStreaming={isStreaming} thinkingPhase={thinkingPhase} error={chatError}
-        onSend={handleChatSend} onClear={clearChat} onAddToSchedule={mySchedule.addFromProposal}
+        onSend={handleChatSend} onClear={handleClearChat} onAddToSchedule={mySchedule.addFromProposal}
         onAddCourseStub={(code) => { setActiveView('browse'); setSearch(code) }} model={model} onModelChange={setModel} />
     if (activeView === 'schedule' && isLoaded)
       return <MySchedule schedule={mySchedule.schedule} proposal={mySchedule.asProposal} term={term}
-        onRemove={mySchedule.removeCourse} onRemoveSection={mySchedule.removeSection} onClear={mySchedule.clearSchedule} />
+        onRemove={mySchedule.removeCourse} onRemoveSection={mySchedule.removeSection} onClear={handleClearSchedule} />
     if (activeView === 'planner')
       return <FourYearPlan plan={fourYearPlan.plan} allCourses={courses} onAddCourse={fourYearPlan.addCourse}
         onRemoveCourse={(quarter, courseCode) => {
           fourYearPlan.removeCourse(quarter, courseCode)
           if (quarter === term) mySchedule.removeCourse(courseCode)
-        }} onClearQuarter={(quarter) => {
-          const q = fourYearPlan.plan.find(p => p.quarter === quarter)
-          fourYearPlan.clearQuarter(quarter)
-          if (quarter === term && q) {
-            for (const c of q.courses) mySchedule.removeCourse(c.course_code)
-          }
         }}
-        onClearAll={() => {
-          const currentQ = fourYearPlan.plan.find(p => p.quarter === term)
-          fourYearPlan.clearAll()
-          if (currentQ) {
-            for (const c of currentQ.courses) mySchedule.removeCourse(c.course_code)
-          }
-        }} totalUnits={fourYearPlan.totalUnits} />
+        onClearQuarter={handleClearQuarter}
+        onClearAll={handleClearAllPlan}
+        totalUnits={fourYearPlan.totalUnits} />
     if (activeView === 'live') return <LiveStatus />
     if (activeView === 'scheduler')
       return <AutoScheduler model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />
     if (activeView === 'events') return <EventsCalendar />
     if (activeView === 'rooms') return <RoomFinder />
     if (activeView === 'internships') return <Internships />
+    if (activeView === 'prereqs')
+      return <PrereqChains completedCodes={completedCourses.completed.map((c) => c.course_code)} />
     if (activeView === 'dining')
       return <Dining model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />
     if (activeView === 'watching')
@@ -271,7 +360,7 @@ function AuthenticatedApp({
         isWatching={seatWatch.isWatching} onWatch={seatWatch.addWatch} />
     if (activeView === 'completed' && isLoaded)
       return <CompletedCourses completed={completedCourses.completed} allCourses={courses}
-        onAdd={completedCourses.addCourse} onRemove={completedCourses.removeCourse} onClear={completedCourses.clearAll}
+        onAdd={completedCourses.addCourse} onRemove={completedCourses.removeCourse} onClear={handleClearCompleted}
         completedCodes={completedCourses.completed.map((c) => c.course_code)} />
 
     // Browse view (default)
@@ -306,6 +395,7 @@ function AuthenticatedApp({
         onToggleSidebar={toggleSidebar}
         theme={theme}
         onToggleTheme={onToggleTheme}
+        cloudStatus={cloudStatus}
       />
 
       <div className="flex flex-1 min-h-0">
@@ -319,7 +409,11 @@ function AuthenticatedApp({
           onToggleCollapse={toggleSidebar}
         />
         <main className="flex-1 min-w-0 overflow-hidden">
-          {renderContent()}
+          <ErrorBoundary resetKey={activeView} label={activeView}>
+            <Suspense fallback={<ViewLoader />}>
+              {renderContent()}
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 

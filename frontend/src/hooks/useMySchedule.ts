@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { ScheduleProposal } from '../lib/schedule'
-import { TERM_OPTIONS } from '../lib/links'
+import { TERM_OPTIONS, courseCodeToSubject } from '../lib/links'
+import { useCloudSync, type CloudSyncStatus } from './useCloudSync'
 
 export interface SavedCourse {
   course_code: string
@@ -45,12 +46,26 @@ function loadAllFromStorage(): AllSchedules {
   }
 }
 
-export function useMySchedule(currentTerm: string) {
+export function useMySchedule(currentTerm: string, uid: string | null = null) {
   const [allSchedules, setAllSchedules] = useState<AllSchedules>(loadAllFromStorage)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(allSchedules))
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(allSchedules))
+    } catch (e) {
+      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+        // Storage full — surface to console so user sees something instead of a silent crash
+        console.warn('[useMySchedule] localStorage quota exceeded; schedule changes will not persist until storage is cleared.')
+      }
+    }
   }, [allSchedules])
+
+  const cloudStatus: CloudSyncStatus = useCloudSync<AllSchedules>({
+    uid,
+    key: 'my-schedules',
+    value: allSchedules,
+    applyRemote: (remote) => setAllSchedules(remote || {}),
+  })
 
   // Current term's schedule
   const schedule = allSchedules[currentTerm] || []
@@ -87,7 +102,7 @@ export function useMySchedule(currentTerm: string) {
           course_code: course.course_code,
           title: course.title,
           units: course.units,
-          subject: course.course_code.split(' ')[0],
+          subject: courseCodeToSubject(course.course_code),
           sections: course.sections,
         }
         const idx = newSchedule.findIndex((c) => c.course_code === saved.course_code)
@@ -122,7 +137,7 @@ export function useMySchedule(currentTerm: string) {
         course_code: courseCode,
         title,
         units,
-        subject: courseCode.split(' ')[0],
+        subject: courseCodeToSubject(courseCode),
         sections: [section],
       }]
     })
@@ -154,5 +169,10 @@ export function useMySchedule(currentTerm: string) {
   // Get count of all courses across all terms (for header badge)
   const totalCount = schedule.length
 
-  return { schedule, allSchedules, asProposal, addCourse, removeCourse, clearSchedule, addFromProposal, hasCourse, hasSection, addSection, removeSection, totalCount }
+  // Restore a previous schedule snapshot — used by Undo on Clear.
+  const restoreSchedule = useCallback((prev: SavedCourse[]) => {
+    setSchedule(() => prev)
+  }, [setSchedule])
+
+  return { schedule, allSchedules, asProposal, addCourse, removeCourse, clearSchedule, restoreSchedule, addFromProposal, hasCourse, hasSection, addSection, removeSection, totalCount, cloudStatus }
 }

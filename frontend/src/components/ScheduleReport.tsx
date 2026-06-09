@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ScheduleProposal } from '../lib/schedule'
-import { buildCalendarBlocks, assignColors, detectConflicts } from '../lib/schedule'
+import { buildCalendarBlocks, assignColors, detectConflicts, getUntimedSections } from '../lib/schedule'
 import { WeeklyCalendar } from './WeeklyCalendar'
 import { capeUrl, socSearchUrl, courseCodeToSubject } from '../lib/links'
 
@@ -13,6 +13,7 @@ export function ScheduleReport({ proposal, onAddToSchedule }: ScheduleReportProp
   const blocks = buildCalendarBlocks(proposal)
   const colors = assignColors(proposal.courses)
   const conflicts = detectConflicts(blocks)
+  const untimedSections = getUntimedSections(proposal)
   const totalSections = proposal.courses.reduce((s, c) => s + c.sections.length, 0)
   const [showPicker, setShowPicker] = useState(false)
   const [checkedCourses, setCheckedCourses] = useState<Set<string>>(
@@ -145,7 +146,7 @@ export function ScheduleReport({ proposal, onAddToSchedule }: ScheduleReportProp
       )}
 
       {/* Calendar */}
-      <WeeklyCalendar blocks={blocks} />
+      <WeeklyCalendar blocks={blocks} untimedSections={untimedSections} />
 
       {/* Course details */}
       <div className="space-y-2">

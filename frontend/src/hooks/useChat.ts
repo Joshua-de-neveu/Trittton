@@ -24,8 +24,17 @@ export function useChat() {
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
-    if (!isStreaming) {
+    if (isStreaming) return
+    try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
+    } catch (e) {
+      // Quota exceeded — drop oldest half of history and retry once
+      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+        try {
+          const trimmed = messages.slice(Math.floor(messages.length / 2))
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed))
+        } catch { /* give up — keep in-memory only */ }
+      }
     }
   }, [messages, isStreaming])
 
@@ -133,5 +142,10 @@ export function useChat() {
     localStorage.removeItem(STORAGE_KEY)
   }, [])
 
-  return { messages, isStreaming, thinkingPhase, error, sendMessage, clearChat }
+  // Restore a previous message snapshot — used by Undo on Clear.
+  const restoreChat = useCallback((prev: ChatMessage[]) => {
+    setMessages(prev)
+  }, [])
+
+  return { messages, isStreaming, thinkingPhase, error, sendMessage, clearChat, restoreChat }
 }

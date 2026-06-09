@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useCloudSync, type CloudSyncStatus } from './useCloudSync'
 
 export interface PlannedCourse {
   course_code: string
@@ -62,12 +63,33 @@ function loadFromStorage(): FourYearPlan {
   }
 }
 
-export function useFourYearPlan() {
+export function useFourYearPlan(uid: string | null = null) {
   const [plan, setPlan] = useState<FourYearPlan>(loadFromStorage)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(plan))
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(plan))
+    } catch (e) {
+      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+        console.warn('[useFourYearPlan] localStorage quota exceeded')
+      }
+    }
   }, [plan])
+
+  const cloudStatus: CloudSyncStatus = useCloudSync<FourYearPlan>({
+    uid,
+    key: 'four-year-plan',
+    value: plan,
+    applyRemote: (remote) => {
+      // Re-merge remote with freshly-generated quarter shells so any new quarters appear.
+      const fresh = generateQuarters()
+      const merged = fresh.map((q) => {
+        const existing = Array.isArray(remote) ? remote.find((s) => s?.quarter === q.quarter) : null
+        return existing ? { ...q, courses: existing.courses || [] } : q
+      })
+      setPlan(merged)
+    },
+  })
 
   const addCourse = useCallback((quarter: string, course: PlannedCourse) => {
     setPlan((prev) =>
@@ -115,7 +137,12 @@ export function useFourYearPlan() {
     setPlan(generateQuarters())
   }, [])
 
+  // Restore a previous plan snapshot — used by Undo on clearQuarter / clearAll.
+  const restorePlan = useCallback((prev: FourYearPlan) => {
+    setPlan(prev)
+  }, [])
+
   const totalUnits = plan.reduce((sum, q) => sum + q.courses.reduce((s, c) => s + c.units, 0), 0)
 
-  return { plan, addCourse, removeCourse, moveCourse, clearQuarter, clearAll, totalUnits }
+  return { plan, addCourse, removeCourse, moveCourse, clearQuarter, clearAll, restorePlan, totalUnits, cloudStatus }
 }

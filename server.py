@@ -792,6 +792,18 @@ def _stream_claude(system_prompt: str, conversation: str, model_name: str):
                 if stderr:
                     yield f"data: {json.dumps({'error': stderr})}\n\n"
         finally:
+            # If the client disconnected (GeneratorExit) or any error occurred while
+            # the subprocess was still running, terminate it so we don't leak Claude CLI processes.
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2)
+                except Exception:
+                    pass
             yield f"data: {json.dumps({'done': True})}\n\n"
 
     yield from stream()

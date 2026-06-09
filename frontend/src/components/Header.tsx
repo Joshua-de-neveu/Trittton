@@ -1,7 +1,8 @@
 import { EnrollCountdown } from './EnrollCountdown'
 import { ThemeToggle } from './ThemeToggle'
+import type { CloudSyncStatus } from '../hooks/useCloudSync'
 
-export type ViewType = 'browse' | 'ai' | 'schedule' | 'planner' | 'live' | 'scheduler' | 'events' | 'completed' | 'watching' | 'dining' | 'rooms' | 'internships'
+export type ViewType = 'browse' | 'ai' | 'schedule' | 'planner' | 'live' | 'scheduler' | 'events' | 'completed' | 'watching' | 'dining' | 'rooms' | 'internships' | 'prereqs'
 
 interface HeaderProps {
   termOptions: { value: string; label: string }[]
@@ -15,9 +16,41 @@ interface HeaderProps {
   onToggleSidebar?: () => void
   theme: 'dark' | 'light'
   onToggleTheme: () => void
+  cloudStatus?: CloudSyncStatus
 }
 
-export function Header({ onScrapeClick, scrapeRunning, term, onTermChange, termOptions, onLogout, userDisplayName, userPhotoURL, onToggleSidebar, theme, onToggleTheme }: HeaderProps) {
+function CloudIndicator({ status }: { status: CloudSyncStatus }) {
+  const styles: Record<CloudSyncStatus, { color: string; label: string; icon: 'cloud' | 'spin' | 'warn' | 'off' }> = {
+    idle:    { color: 'text-dim',    label: 'Idle',    icon: 'cloud' },
+    loading: { color: 'text-muted',  label: 'Loading sync…', icon: 'spin' },
+    syncing: { color: 'text-accent', label: 'Syncing…', icon: 'spin' },
+    synced:  { color: 'text-green',  label: 'Synced',  icon: 'cloud' },
+    error:   { color: 'text-red',    label: 'Sync error', icon: 'warn' },
+    offline: { color: 'text-dim',    label: 'Local only', icon: 'off' },
+  }
+  const s = styles[status]
+  return (
+    <span title={`Cross-device sync · ${s.label}`} className={`p-1.5 ${s.color}`}>
+      {s.icon === 'spin' ? (
+        <span className="block w-4 h-4 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+      ) : s.icon === 'warn' ? (
+        <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+      ) : s.icon === 'off' ? (
+        <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M8.288 7.69A4.5 4.5 0 0112 6a4.5 4.5 0 014.5 4.5c0 .07-.002.139-.005.207A4.5 4.5 0 0119.5 15c0 .995-.323 1.916-.87 2.665M5.4 18.6A4.5 4.5 0 014.5 15c0-2.485 2.015-4.5 4.5-4.5h.158" />
+        </svg>
+      ) : (
+        <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" />
+        </svg>
+      )}
+    </span>
+  )
+}
+
+export function Header({ onScrapeClick, scrapeRunning, term, onTermChange, termOptions, onLogout, userDisplayName, userPhotoURL, onToggleSidebar, theme, onToggleTheme, cloudStatus }: HeaderProps) {
   return (
     <header className="h-14 px-4 flex items-center justify-between sticky top-0 z-50 border-b border-border"
       style={{
@@ -86,6 +119,8 @@ export function Header({ onScrapeClick, scrapeRunning, term, onTermChange, termO
         </button>
 
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+
+        {cloudStatus && <CloudIndicator status={cloudStatus} />}
 
         {onLogout && (
           <div className="flex items-center gap-1.5 ml-0.5">

@@ -139,6 +139,42 @@ export function buildCalendarBlocks(proposal: ScheduleProposal): CalendarBlock[]
   return blocks
 }
 
+export interface UntimedSection {
+  courseCode: string
+  title: string
+  type: string
+  section: string
+  days: string
+  time: string
+  building: string
+  room: string
+  instructor: string
+}
+
+// Sections whose time cannot be plotted on the weekly grid (TBA / unparseable).
+// We surface these in the UI so they aren't silently invisible — including the conflict checker.
+export function getUntimedSections(proposal: ScheduleProposal): UntimedSection[] {
+  const out: UntimedSection[] = []
+  for (const course of proposal.courses) {
+    for (const sec of course.sections) {
+      if (parseTime(sec.time) === null) {
+        out.push({
+          courseCode: course.course_code,
+          title: course.title,
+          type: sec.type,
+          section: sec.section,
+          days: sec.days,
+          time: sec.time,
+          building: sec.building,
+          room: sec.room,
+          instructor: sec.instructor,
+        })
+      }
+    }
+  }
+  return out
+}
+
 export function detectConflicts(blocks: CalendarBlock[]): [CalendarBlock, CalendarBlock][] {
   const conflicts: [CalendarBlock, CalendarBlock][] = []
   for (let i = 0; i < blocks.length; i++) {

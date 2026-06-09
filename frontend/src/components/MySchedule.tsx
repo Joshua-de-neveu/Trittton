@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { SavedCourse } from '../hooks/useMySchedule'
 import type { ScheduleProposal } from '../lib/schedule'
-import { buildCalendarBlocks, detectConflicts, assignColors } from '../lib/schedule'
+import { buildCalendarBlocks, detectConflicts, assignColors, getUntimedSections } from '../lib/schedule'
 import { WeeklyCalendar } from './WeeklyCalendar'
 import { socSearchUrl, capeUrl, rmpUrl, courseCodeToSubject } from '../lib/links'
 import { downloadICS } from '../lib/icsExport'
@@ -23,6 +23,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
   const blocks = buildCalendarBlocks(proposal)
   const colors = assignColors(proposal.courses)
   const conflicts = detectConflicts(blocks)
+  const untimedSections = getUntimedSections(proposal)
   const [gcalStatus, setGcalStatus] = useState<GCalStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
@@ -212,7 +213,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
         </div>
 
         {/* Calendar */}
-        <WeeklyCalendar blocks={blocks} />
+        <WeeklyCalendar blocks={blocks} untimedSections={untimedSections} />
 
         {/* Course cards */}
         <div className="space-y-2">
