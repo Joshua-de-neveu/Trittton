@@ -313,6 +313,33 @@ function DetailPanel({ courseCode, allCourses, completedSet, onClose, onSelect, 
               : 'bg-green text-white hover:bg-green/85'
           }`}
         >{isDone ? 'Remove from History' : 'Add to History'}</button>
+
+        {/* WebReg — register for sections */}
+        {course && course.sections && course.sections.length > 0 && !isDone && (
+          <div className="mt-2 space-y-1.5">
+            <div className="text-[10px] font-bold text-dim uppercase tracking-wide">Register</div>
+            {course.sections.slice(0, 4).map(s => (
+              <div key={s.section_id || s.section} className="flex items-center gap-1.5">
+                <button onClick={() => {
+                  navigator.clipboard.writeText(s.section_id)
+                  window.open('https://act.ucsd.edu/webreg2/start', '_blank')
+                }}
+                  className="flex-1 flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-card border border-border hover:border-accent/30 hover:bg-accent/5 cursor-pointer transition-all text-left text-[10px]"
+                  title={`Copy section ID ${s.section_id} and open WebReg`}
+                >
+                  <span className="font-mono font-bold text-accent">{s.type} {s.section}</span>
+                  <span className="text-dim truncate">{s.days} {s.time}</span>
+                  <span className={`ml-auto font-mono shrink-0 ${parseInt(s.available) > 0 ? 'text-green' : 'text-red'}`}>
+                    {s.available}/{s.limit}
+                  </span>
+                </button>
+              </div>
+            ))}
+            <p className="text-[9px] text-dim leading-relaxed">
+              Click a section to copy its ID and open WebReg. Paste the ID in WebReg to enroll.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
