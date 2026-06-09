@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import type { CompletedCourse } from '../hooks/useCompletedCourses'
 import type { Course } from '../types'
 import { GradProgress } from './GradProgress'
+import { PREREQ_GRAPH, getCourseStatus, getUnlocks, getDepth, getAllDownstream, type CourseStatus } from '../lib/prereqChains'
 
 interface CompletedCoursesProps {
   completed: CompletedCourse[]
@@ -12,292 +13,517 @@ interface CompletedCoursesProps {
   completedCodes?: string[]
 }
 
-function isValidCourseCode(input: string): boolean {
-  return /^[A-Z]{2,5}\s+\d{1,3}[A-Z]{0,3}$/i.test(input.trim())
-}
-
-function normalizeCourseCode(input: string): string {
-  const parts = input.trim().split(/\s+/)
-  if (parts.length < 2) return input.trim().toUpperCase()
-  return parts[0].toUpperCase() + ' ' + parts.slice(1).join('').toUpperCase()
-}
+type Tab = 'courses' | 'progress' | 'prereqs'
 
 export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onClear, completedCodes }: CompletedCoursesProps) {
-  const [tab, setTab] = useState<'history' | 'progress'>('history')
+  const [tab, setTab] = useState<Tab>('courses')
+  const [selectedDept, setSelectedDept] = useState('')
+  const [selectedCourse, setSelectedCourse] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [showDropdown, setShowDropdown] = useState(false)
-  const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set())
 
   const completedSet = useMemo(() => new Set(completed.map(c => c.course_code)), [completed])
+  const codes = completedCodes || completed.map(c => c.course_code)
 
-  const searchResults = useMemo(() => {
-    if (search.length < 2) return []
-    const q = search.toLowerCase()
-    return allCourses
-      .filter(c => c.course_code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
-      .filter(c => !completedSet.has(c.course_code))
-      .slice(0, 12)
-  }, [search, allCourses, completedSet])
-
-  const manualCode = useMemo(() => {
-    if (search.length < 3) return null
-    const normalized = normalizeCourseCode(search)
-    if (!isValidCourseCode(normalized)) return null
-    if (completedSet.has(normalized)) return null
-    if (searchResults.some(c => c.course_code === normalized)) return null
-    return normalized
-  }, [search, searchResults, completedSet])
-
-  const handleAddFromSearch = (course: Course) => {
-    onAdd({ course_code: course.course_code, title: course.title })
-    setSearch('')
-    setShowDropdown(false)
-  }
-
-  const handleAddManual = (code: string) => {
-    onAdd({ course_code: code, title: '' })
-    setSearch('')
-    setShowDropdown(false)
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      if (searchResults.length > 0) handleAddFromSearch(searchResults[0])
-      else if (manualCode) handleAddManual(manualCode)
+  // Group ALL scraped courses by department
+  const deptMap = useMemo(() => {
+    const map = new Map<string, Course[]>()
+    for (const c of allCourses) {
+      if (!map.has(c.subject)) map.set(c.subject, [])
+      map.get(c.subject)!.push(c)
     }
-    if (e.key === 'Escape') setShowDropdown(false)
-  }
-
-  // Group by department
-  const bySubject = useMemo(() => {
-    const map = new Map<string, CompletedCourse[]>()
-    for (const c of completed) {
-      const subj = c.course_code.split(' ')[0]
-      if (!map.has(subj)) map.set(subj, [])
-      map.get(subj)!.push(c)
-    }
-    // Sort courses within each dept
     for (const courses of map.values()) {
       courses.sort((a, b) => a.course_code.localeCompare(b.course_code))
     }
     return map
-  }, [completed])
+  }, [allCourses])
 
   const departments = useMemo(() =>
-    Array.from(bySubject.entries()).sort(([a], [b]) => a.localeCompare(b)),
-  [bySubject])
+    Array.from(deptMap.keys()).sort(),
+  [deptMap])
 
-  const toggleDept = (dept: string) => {
-    setExpandedDepts(prev => {
-      const next = new Set(prev)
-      if (next.has(dept)) next.delete(dept)
-      else next.add(dept)
-      return next
-    })
-  }
+  // Auto-select first dept
+  const activeDept = selectedDept || departments[0] || ''
+  const deptCourses = deptMap.get(activeDept) || []
 
-  // ── Progress tab ──
-  if (tab === 'progress') {
-    return (
-      <div className="h-[calc(100vh-64px)] overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-8 pt-6 pb-2">
-          <TabBar tab={tab} onTabChange={setTab} completedCount={completed.length} />
+  // Filter courses in current dept
+  const filteredCourses = useMemo(() => {
+    if (!search) return deptCourses
+    const q = search.toLowerCase()
+    return deptCourses.filter(c =>
+      c.course_code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q)
+    )
+  }, [deptCourses, search])
+
+  // Count completed per dept
+  const deptCompletedCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of completed) {
+      const subj = c.course_code.split(' ')[0]
+      counts.set(subj, (counts.get(subj) || 0) + 1)
+    }
+    return counts
+  }, [completed])
+
+  const toggleCourse = useCallback((course: Course) => {
+    if (completedSet.has(course.course_code)) {
+      onRemove(course.course_code)
+    } else {
+      onAdd({ course_code: course.course_code, title: course.title })
+    }
+  }, [completedSet, onAdd, onRemove])
+
+  // Prereq chain data for current department
+  const prereqNodes = useMemo(() => {
+    return deptCourses
+      .filter(c => PREREQ_GRAPH[c.course_code])
+      .map(c => ({ course: c, node: PREREQ_GRAPH[c.course_code] }))
+  }, [deptCourses])
+
+  const prereqLayers = useMemo(() => {
+    const byDepth = new Map<number, typeof prereqNodes>()
+    for (const item of prereqNodes) {
+      const d = getDepth(item.course.course_code)
+      if (!byDepth.has(d)) byDepth.set(d, [])
+      byDepth.get(d)!.push(item)
+    }
+    return Array.from(byDepth.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([depth, nodes]) => ({ depth, nodes }))
+  }, [prereqNodes])
+
+  return (
+    <div className="h-[calc(100vh-64px)] flex">
+      {/* ── LEFT: Department Browser ── */}
+      <div className="w-56 shrink-0 border-r border-border bg-surface flex flex-col overflow-hidden">
+        <div className="px-4 pt-4 pb-2">
+          <div className="text-[11px] font-medium text-dim uppercase tracking-wider">Departments</div>
+          <div className="text-[10px] text-muted mt-0.5">
+            {completed.length} courses completed
+          </div>
         </div>
-        <GradProgress completedCodes={completedCodes || completed.map(c => c.course_code)} />
+        <div className="flex-1 overflow-y-auto px-2 pb-2">
+          {departments.map(dept => {
+            const isActive = activeDept === dept
+            const count = deptMap.get(dept)?.length || 0
+            const doneCount = deptCompletedCounts.get(dept) || 0
+            return (
+              <button key={dept}
+                onClick={() => { setSelectedDept(dept); setSearch(''); setSelectedCourse(null) }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-all text-left mb-0.5 ${
+                  isActive ? 'bg-accent/10 text-accent' : 'text-muted hover:bg-card hover:text-text'
+                }`}
+              >
+                <span className={`font-mono text-[12px] font-bold w-12 ${isActive ? 'text-accent' : 'text-text'}`}>{dept}</span>
+                <span className="flex-1 text-[11px] tabular-nums">{count}</span>
+                {doneCount > 0 && (
+                  <span className="text-[10px] font-semibold text-green bg-green/10 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{doneCount}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── MAIN CONTENT ── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Top bar: tabs + stats */}
+        <div className="px-6 py-3 border-b border-border shrink-0">
+          <div className="flex items-center gap-4">
+            {/* Tabs */}
+            <div className="flex gap-1 bg-surface rounded-xl p-1">
+              {([
+                { id: 'courses' as Tab, label: 'Courses', icon: 'grid' },
+                { id: 'prereqs' as Tab, label: 'Prereq Chains', icon: 'tree' },
+                { id: 'progress' as Tab, label: 'Degree Progress', icon: 'chart' },
+              ]).map(t => (
+                <button key={t.id} onClick={() => setTab(t.id)}
+                  className={`px-4 py-1.5 rounded-lg text-[12px] font-medium cursor-pointer transition-all ${
+                    tab === t.id ? 'bg-card text-text shadow-sm' : 'text-muted hover:text-text'
+                  }`}
+                >{t.label}</button>
+              ))}
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Stats */}
+            <div className="flex items-center gap-4 text-[12px]">
+              <span className="text-muted"><b className="text-green font-mono">{completed.length}</b> completed</span>
+              <span className="text-muted"><b className="text-text font-mono">{departments.length}</b> depts</span>
+            </div>
+
+            {completed.length > 0 && (
+              <button onClick={() => { if (confirm(`Clear all ${completed.length} completed courses?`)) onClear() }}
+                className="text-[11px] px-2.5 py-1 rounded-lg text-dim hover:text-red hover:bg-red/8 cursor-pointer transition-all"
+              >Clear All</button>
+            )}
+          </div>
+        </div>
+
+        {/* Tab content */}
+        {tab === 'progress' ? (
+          <div className="flex-1 overflow-y-auto">
+            <GradProgress completedCodes={codes} />
+          </div>
+        ) : tab === 'prereqs' ? (
+          <div className="flex-1 overflow-y-auto">
+            <PrereqChainView
+              deptCourses={deptCourses}
+              prereqLayers={prereqLayers}
+              completedSet={completedSet}
+              selectedCourse={selectedCourse}
+              onSelectCourse={setSelectedCourse}
+              onToggleCourse={toggleCourse}
+              dept={activeDept}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <CourseGridView
+              courses={filteredCourses}
+              completedSet={completedSet}
+              search={search}
+              onSearchChange={setSearch}
+              onToggleCourse={toggleCourse}
+              selectedCourse={selectedCourse}
+              onSelectCourse={setSelectedCourse}
+              dept={activeDept}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── RIGHT: Course Detail Panel ── */}
+      {selectedCourse && (
+        <CourseDetailPanel
+          courseCode={selectedCourse}
+          allCourses={allCourses}
+          completedSet={completedSet}
+          onClose={() => setSelectedCourse(null)}
+          onSelectCourse={setSelectedCourse}
+          onToggleCourse={(code) => {
+            const course = allCourses.find(c => c.course_code === code)
+            if (course) toggleCourse(course)
+            else if (completedSet.has(code)) onRemove(code)
+            else onAdd({ course_code: code, title: '' })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Course Grid View — click-to-toggle courses
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CourseGridView({ courses, completedSet, search, onSearchChange, onToggleCourse, selectedCourse, onSelectCourse, dept }: {
+  courses: Course[]
+  completedSet: Set<string>
+  search: string
+  onSearchChange: (s: string) => void
+  onToggleCourse: (c: Course) => void
+  selectedCourse: string | null
+  onSelectCourse: (id: string | null) => void
+  dept: string
+}) {
+  const doneCount = courses.filter(c => completedSet.has(c.course_code)).length
+
+  return (
+    <div className="px-6 py-5">
+      {/* Header + search */}
+      <div className="flex items-center gap-4 mb-4">
+        <div>
+          <h2 className="text-lg font-bold text-text">{dept}</h2>
+          <div className="text-[12px] text-muted">{courses.length} courses &middot; <span className="text-green">{doneCount} completed</span></div>
+        </div>
+        <div className="flex-1" />
+        <div className="relative w-64">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="8"/><path strokeLinecap="round" d="m21 21-4.35-4.35"/>
+          </svg>
+          <input value={search} onChange={e => onSearchChange(e.target.value)}
+            placeholder="Filter courses..."
+            className="w-full bg-surface border border-border rounded-xl text-text text-[13px] px-3 py-2 pl-9 outline-none focus:border-accent placeholder:text-dim"
+          />
+        </div>
+      </div>
+
+      {/* Course grid */}
+      {courses.length === 0 ? (
+        <div className="text-center py-16 text-muted text-[13px]">No courses match your search</div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+          {courses.map(c => {
+            const done = completedSet.has(c.course_code)
+            const isSelected = selectedCourse === c.course_code
+            const status = getCourseStatus(c.course_code, completedSet)
+            return (
+              <div key={c.course_code}
+                className={`rounded-xl border-2 transition-all duration-150 overflow-hidden ${
+                  done ? 'bg-green/5 border-green/25' :
+                  status === 'available' ? 'bg-accent/5 border-accent/15' :
+                  'bg-card border-border'
+                } ${isSelected ? 'ring-2 ring-accent ring-offset-1 ring-offset-bg' : ''}`}
+              >
+                <div className="flex items-stretch">
+                  {/* Toggle button */}
+                  <button onClick={() => onToggleCourse(c)}
+                    className={`w-11 shrink-0 flex items-center justify-center cursor-pointer transition-all ${
+                      done ? 'bg-green/10 hover:bg-green/20' : 'bg-surface/50 hover:bg-accent/10'
+                    }`}
+                    title={done ? 'Mark as not completed' : 'Mark as completed'}
+                  >
+                    {done ? (
+                      <svg width="16" height="16" fill="none" stroke="#3dd68c" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    ) : (
+                      <div className={`w-4 h-4 rounded-full border-2 ${status === 'available' ? 'border-accent/40' : 'border-border'}`} />
+                    )}
+                  </button>
+
+                  {/* Course info — click to see details */}
+                  <button onClick={() => onSelectCourse(c.course_code === selectedCourse ? null : c.course_code)}
+                    className="flex-1 text-left px-3 py-2.5 cursor-pointer hover:bg-surface/30 transition-colors min-w-0"
+                  >
+                    <div className={`font-mono text-[12px] font-bold ${done ? 'text-green' : 'text-text'}`}>
+                      {c.course_code}
+                    </div>
+                    <div className="text-[11px] text-muted truncate mt-0.5">{c.title}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[10px] text-dim">{c.units}u</span>
+                      {PREREQ_GRAPH[c.course_code] && PREREQ_GRAPH[c.course_code].prereqs.length > 0 && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                          status === 'locked' ? 'bg-red/8 text-red/60' : 'bg-surface text-dim'
+                        }`}>
+                          {PREREQ_GRAPH[c.course_code].prereqs.length} prereq{PREREQ_GRAPH[c.course_code].prereqs.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {getUnlocks(c.course_code).length > 0 && (
+                        <span className="text-[9px] text-dim">unlocks {getUnlocks(c.course_code).length}</span>
+                      )}
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Prereq Chain View — visual prerequisite graph
+// ═══════════════════════════════════════════════════════════════════════════
+
+function PrereqChainView({ prereqLayers, completedSet, selectedCourse, onSelectCourse, dept }: {
+  deptCourses: Course[]
+  prereqLayers: { depth: number; nodes: { course: Course; node: { id: string; prereqs: string[] } }[] }[]
+  completedSet: Set<string>
+  selectedCourse: string | null
+  onSelectCourse: (id: string | null) => void
+  onToggleCourse: (c: Course) => void
+  dept: string
+}) {
+  const labels = ['No Prerequisites', 'Requires 1 prerequisite', 'Requires 2+ prerequisites', 'Advanced chain', 'Deep chain']
+
+  if (prereqLayers.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 rounded-2xl bg-surface flex items-center justify-center mx-auto mb-4">
+            <svg width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" className="text-muted">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v0a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 6z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-medium text-text mb-1">No prerequisite data for {dept}</h3>
+          <p className="text-[13px] text-muted">Prereq chains are available for CSE, MATH, PHYS, ECE, DSC, CHEM, BIO, ECON, COGS, MAE, POLI, and PSYC. Switch to the Courses tab to browse and mark courses.</p>
+        </div>
       </div>
     )
   }
 
-  // ── History tab ──
-  return (
-    <div className="h-[calc(100vh-64px)] overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-8 py-6 space-y-5">
-        <TabBar tab={tab} onTabChange={setTab} completedCount={completed.length} />
+  // Stats
+  const total = prereqLayers.reduce((s, l) => s + l.nodes.length, 0)
+  const done = prereqLayers.reduce((s, l) => s + l.nodes.filter(n => completedSet.has(n.course.course_code)).length, 0)
 
-        {/* Search bar */}
-        <div className="relative">
-          <div className="relative">
-            <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="8"/><path strokeLinecap="round" d="m21 21-4.35-4.35"/>
-            </svg>
-            <input
-              type="text"
-              value={search}
-              onChange={e => { setSearch(e.target.value); setShowDropdown(true) }}
-              onFocus={() => setShowDropdown(true)}
-              onKeyDown={handleKeyDown}
-              placeholder="Add a course — search or type code (e.g. CSE 12, MATH 20A)..."
-              className="w-full bg-card border border-border rounded-2xl text-text text-[14px]
-                px-5 py-3.5 pl-11 outline-none transition-all
-                focus:border-accent focus:shadow-[0_0_0_3px_rgba(79,142,247,0.1)]
-                placeholder:text-dim"
-            />
-            {search && (
-              <button onClick={() => { setSearch(''); setShowDropdown(false) }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-dim hover:text-muted cursor-pointer">
-                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
+  return (
+    <div className="px-6 py-5">
+      <div className="flex items-center gap-4 mb-5">
+        <h2 className="text-lg font-bold text-text">{dept} Prerequisite Chain</h2>
+        <div className="flex items-center gap-3 text-[12px]">
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green" /> Completed</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-accent" /> Available</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-border" /> Locked</span>
+        </div>
+        <div className="flex-1" />
+        <span className="text-[12px] text-muted"><b className="text-green">{done}</b>/{total} completed</span>
+      </div>
+
+      {prereqLayers.map(({ depth, nodes }, li) => (
+        <div key={depth} className="mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[11px] font-medium text-dim uppercase tracking-wide">
+              {labels[Math.min(depth, labels.length - 1)]}
+            </span>
+            <div className="flex-1 h-px bg-border/30" />
+            <span className="text-[10px] text-dim">{nodes.length}</span>
           </div>
 
-          {/* Dropdown */}
-          {showDropdown && (searchResults.length > 0 || manualCode) && (
-            <div className="absolute left-0 right-0 top-full mt-1.5 bg-card border border-border2 rounded-2xl shadow-2xl z-50 max-h-80 overflow-y-auto">
-              {manualCode && (
-                <button onClick={() => handleAddManual(manualCode)}
-                  className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-surface transition-colors cursor-pointer border-b border-border/50"
+          <div className="flex flex-wrap gap-2">
+            {nodes.map(({ course }) => {
+              const status = getCourseStatus(course.course_code, completedSet)
+              const isSelected = selectedCourse === course.course_code
+              const unlockCount = getUnlocks(course.course_code).length
+              return (
+                <button key={course.course_code}
+                  onClick={() => onSelectCourse(course.course_code === selectedCourse ? null : course.course_code)}
+                  className={`relative px-3 py-2 rounded-xl border-2 cursor-pointer transition-all text-left min-w-[130px] ${
+                    status === 'completed' ? 'bg-green/8 border-green/30' :
+                    status === 'available' ? 'bg-accent/8 border-accent/25' :
+                    'bg-card border-border'
+                  } ${isSelected ? 'ring-2 ring-accent scale-[1.03]' : 'hover:scale-[1.02] hover:shadow-sm'}`}
                 >
-                  <div className="w-8 h-8 rounded-lg bg-gold/10 flex items-center justify-center shrink-0">
-                    <svg width="14" height="14" fill="none" stroke="#f5c842" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <span className="font-mono text-[13px] font-bold text-gold">{manualCode}</span>
-                    <span className="text-[12px] text-muted ml-2">Add manually</span>
-                  </div>
-                  <kbd className="text-[10px] text-dim border border-border rounded px-1.5 py-0.5">Enter</kbd>
+                  {status === 'completed' && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-green flex items-center justify-center">
+                      <svg width="8" height="8" fill="none" stroke="white" strokeWidth="3" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </div>
+                  )}
+                  <div className={`font-mono text-[12px] font-bold ${
+                    status === 'completed' ? 'text-green' : status === 'available' ? 'text-accent' : 'text-muted'
+                  }`}>{course.course_code}</div>
+                  <div className="text-[10px] text-muted truncate mt-0.5 max-w-[140px]">{course.title}</div>
+                  {unlockCount > 0 && (
+                    <div className="text-[9px] text-dim mt-1">unlocks {unlockCount}</div>
+                  )}
                 </button>
-              )}
-              {searchResults.map(c => (
-                <button key={c.course_code} onClick={() => handleAddFromSearch(c)}
-                  className="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-surface transition-colors cursor-pointer border-b border-border/30 last:border-0"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
-                    <svg width="14" height="14" fill="none" stroke="#4f8ef7" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className="font-mono text-[13px] font-semibold text-text">{c.course_code}</span>
-                    <span className="text-[12px] text-muted ml-2 truncate">{c.title}</span>
-                  </div>
-                  <span className="text-[11px] text-gold font-mono shrink-0">{c.units}u</span>
-                </button>
-              ))}
-            </div>
-          )}
+              )
+            })}
+          </div>
 
-          {showDropdown && search.length >= 2 && searchResults.length === 0 && !manualCode && (
-            <div className="absolute left-0 right-0 top-full mt-1.5 bg-card border border-border2 rounded-2xl shadow-2xl z-50 px-5 py-4">
-              <p className="text-[12px] text-muted">
-                No match. Type a full code like <span className="font-mono text-accent">MATH 20A</span> and press Enter to add manually.
-              </p>
+          {li < prereqLayers.length - 1 && (
+            <div className="flex justify-center my-2">
+              <svg width="16" height="12" viewBox="0 0 16 12" className="text-border/60">
+                <path d="M8 0 L8 8 M5 6 L8 9 L11 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
             </div>
           )}
         </div>
+      ))}
+    </div>
+  )
+}
 
-        {/* Stats row */}
-        {completed.length > 0 && (
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-6 flex-1">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-green/10 flex items-center justify-center">
-                  <svg width="16" height="16" fill="none" stroke="#3dd68c" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="text-[18px] font-bold text-text">{completed.length}</div>
-                  <div className="text-[10px] text-muted">Courses</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-accent2/10 flex items-center justify-center">
-                  <svg width="16" height="16" fill="none" stroke="#7c5cfc" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v0a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 6z" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="text-[18px] font-bold text-text">{bySubject.size}</div>
-                  <div className="text-[10px] text-muted">Departments</div>
-                </div>
-              </div>
+// ═══════════════════════════════════════════════════════════════════════════
+// Course Detail Panel — shows prereqs, unlocks, description
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CourseDetailPanel({ courseCode, allCourses, completedSet, onClose, onSelectCourse, onToggleCourse }: {
+  courseCode: string
+  allCourses: Course[]
+  completedSet: Set<string>
+  onClose: () => void
+  onSelectCourse: (id: string) => void
+  onToggleCourse: (code: string) => void
+}) {
+  const course = allCourses.find(c => c.course_code === courseCode)
+  const node = PREREQ_GRAPH[courseCode]
+  const status = getCourseStatus(courseCode, completedSet)
+  const unlocks = getUnlocks(courseCode)
+  const downstream = getAllDownstream(courseCode)
+  const isDone = completedSet.has(courseCode)
+
+  return (
+    <div className="w-72 shrink-0 border-l border-border bg-surface flex flex-col overflow-hidden animate-fade-in">
+      <div className="px-4 py-4 border-b border-border">
+        <div className="flex items-center justify-between mb-2">
+          <StatusBadge status={status} />
+          <button onClick={onClose} className="text-dim hover:text-text cursor-pointer">&times;</button>
+        </div>
+        <h3 className="text-[16px] font-bold text-text">{courseCode}</h3>
+        {course && <p className="text-[12px] text-muted mt-1">{course.title}</p>}
+        {course && <span className="inline-block mt-1.5 text-[10px] font-medium text-gold bg-gold/10 px-2 py-0.5 rounded">{course.units} units</span>}
+
+        {/* Toggle button */}
+        <button onClick={() => onToggleCourse(courseCode)}
+          className={`w-full mt-3 py-2 rounded-lg text-[12px] font-semibold cursor-pointer transition-all ${
+            isDone
+              ? 'bg-red/10 text-red border border-red/20 hover:bg-red/20'
+              : 'bg-green/10 text-green border border-green/20 hover:bg-green/20'
+          }`}
+        >{isDone ? 'Remove from Completed' : 'Mark as Completed'}</button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Prerequisites */}
+        {node && (
+          <div>
+            <div className="text-[10px] font-medium text-muted uppercase tracking-wide mb-1.5">
+              Prerequisites ({node.prereqs.length})
             </div>
-            <button
-              onClick={() => { if (confirm(`Clear all ${completed.length} completed courses?`)) onClear() }}
-              className="text-[11px] px-3 py-1.5 rounded-lg text-red/50 hover:text-red hover:bg-red/8 border border-transparent hover:border-red/15 transition-all cursor-pointer"
-            >
-              Clear All
-            </button>
+            {node.prereqs.length === 0 ? (
+              <div className="text-[11px] text-green">No prerequisites</div>
+            ) : (
+              <div className="space-y-1">
+                {node.prereqs.map(p => (
+                  <button key={p} onClick={() => onSelectCourse(p)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-card border border-border hover:border-border2 cursor-pointer transition-all text-left"
+                  >
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${
+                      completedSet.has(p) ? 'bg-green' : canTake(p) ? 'bg-accent' : 'bg-border'
+                    }`} />
+                    <span className="font-mono text-[11px] font-semibold text-text">{p}</span>
+                    {completedSet.has(p) && (
+                      <svg width="10" height="10" fill="none" stroke="#3dd68c" strokeWidth="3" viewBox="0 0 24 24" className="ml-auto">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Empty state */}
-        {completed.length === 0 ? (
-          <div className="text-center py-20">
-            <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-accent/10 to-accent2/10 flex items-center justify-center mx-auto mb-5">
-              <svg width="36" height="36" fill="none" stroke="url(#grad)" strokeWidth="1.5" viewBox="0 0 24 24">
-                <defs><linearGradient id="grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#4f8ef7"/><stop offset="100%" stopColor="#7c5cfc"/></linearGradient></defs>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.438 60.438 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342" />
-              </svg>
+        {/* Unlocks */}
+        {unlocks.length > 0 && (
+          <div>
+            <div className="text-[10px] font-medium text-muted uppercase tracking-wide mb-1.5">
+              Unlocks ({unlocks.length})
             </div>
-            <h3 className="text-lg font-semibold text-text mb-2">Track Your Academic Journey</h3>
-            <p className="text-[14px] text-muted max-w-md mx-auto leading-relaxed mb-4">
-              Add courses you've completed to track graduation progress, check prerequisites, and get smarter AI recommendations.
-            </p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {['CSE 11', 'MATH 20A', 'PHYS 2A', 'CHEM 6A'].map(code => (
-                <button key={code} onClick={() => handleAddManual(code)}
-                  className="font-mono text-[12px] px-3 py-1.5 rounded-lg bg-card border border-border text-muted hover:text-accent hover:border-accent/30 cursor-pointer transition-all"
+            <div className="space-y-1">
+              {unlocks.map(u => (
+                <button key={u} onClick={() => onSelectCourse(u)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-card border border-border hover:border-border2 cursor-pointer transition-all text-left"
                 >
-                  + {code}
+                  <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className="text-accent shrink-0">
+                    <path strokeLinecap="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                  <span className="font-mono text-[11px] font-semibold text-text">{u}</span>
                 </button>
               ))}
             </div>
           </div>
-        ) : (
-          /* Course list grouped by department */
-          <div className="space-y-2">
-            {departments.map(([dept, courses]) => {
-              const isExpanded = expandedDepts.has(dept) || departments.length <= 4
-              return (
-                <div key={dept} className="bg-card border border-border rounded-xl overflow-hidden">
-                  <button onClick={() => toggleDept(dept)}
-                    className="w-full flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface/50 transition-colors"
-                  >
-                    <div className="w-10 h-6 rounded-md bg-accent/10 flex items-center justify-center">
-                      <span className="font-mono text-[11px] font-bold text-accent">{dept}</span>
-                    </div>
-                    <div className="flex-1 text-left">
-                      <span className="text-[13px] font-medium text-text">{courses.length} course{courses.length !== 1 ? 's' : ''}</span>
-                    </div>
-                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
-                      className={`text-dim transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                    </svg>
-                  </button>
+        )}
 
-                  {isExpanded && (
-                    <div className="px-4 pb-3 flex flex-wrap gap-2">
-                      {courses.map(c => (
-                        <div key={c.course_code}
-                          className="group flex items-center gap-2 bg-surface rounded-lg px-3 py-1.5 border border-border/50"
-                        >
-                          <svg width="12" height="12" fill="none" stroke="#3dd68c" strokeWidth="2.5" viewBox="0 0 24 24" className="shrink-0">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                          </svg>
-                          <span className="font-mono text-[12px] font-semibold text-text">{c.course_code}</span>
-                          {c.title && (
-                            <span className="text-[11px] text-muted truncate max-w-[180px] hidden sm:inline">{c.title}</span>
-                          )}
-                          <button onClick={() => onRemove(c.course_code)}
-                            className="ml-auto text-dim hover:text-red transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-                          >
-                            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+        {/* Full downstream */}
+        {downstream.length > 0 && (
+          <div>
+            <div className="text-[10px] font-medium text-muted uppercase tracking-wide mb-1.5">
+              Full chain ({downstream.length})
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {downstream.map(c => (
+                <button key={c} onClick={() => onSelectCourse(c)}
+                  className="font-mono text-[10px] px-2 py-0.5 rounded bg-accent/8 text-accent hover:bg-accent/15 cursor-pointer"
+                >{c}</button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -305,40 +531,18 @@ export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onCle
   )
 }
 
-function TabBar({ tab, onTabChange, completedCount }: {
-  tab: 'history' | 'progress'
-  onTabChange: (t: 'history' | 'progress') => void
-  completedCount: number
-}) {
-  return (
-    <div className="flex items-center gap-4">
-      <div className="flex gap-1 bg-surface rounded-xl p-1">
-        <button onClick={() => onTabChange('history')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all ${
-            tab === 'history' ? 'bg-card text-text shadow-sm' : 'text-muted hover:text-text'
-          }`}
-        >
-          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-          </svg>
-          Completed Courses
-          {completedCount > 0 && (
-            <span className={`min-w-[20px] h-5 text-[11px] font-semibold rounded-full flex items-center justify-center px-1.5 ${
-              tab === 'history' ? 'bg-green/15 text-green' : 'bg-surface text-muted'
-            }`}>{completedCount}</span>
-          )}
-        </button>
-        <button onClick={() => onTabChange('progress')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all ${
-            tab === 'progress' ? 'bg-card text-text shadow-sm' : 'text-muted hover:text-text'
-          }`}
-        >
-          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75z" />
-          </svg>
-          Graduation Progress
-        </button>
-      </div>
-    </div>
-  )
+function canTake(courseId: string): boolean {
+  const node = PREREQ_GRAPH[courseId]
+  if (!node) return true
+  return node.prereqs.length === 0
+}
+
+function StatusBadge({ status }: { status: CourseStatus }) {
+  const config = {
+    completed: { label: 'Completed', cls: 'bg-green/10 text-green border-green/20' },
+    available: { label: 'Available', cls: 'bg-accent/10 text-accent border-accent/20' },
+    locked: { label: 'Prereqs Needed', cls: 'bg-red/10 text-red border-red/20' },
+  }
+  const c = config[status]
+  return <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${c.cls}`}>{c.label}</span>
 }

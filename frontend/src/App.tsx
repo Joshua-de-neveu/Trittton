@@ -32,7 +32,7 @@ import { WatchList } from './components/WatchList'
 import { Dining } from './components/Dining'
 import { RoomFinder } from './components/RoomFinder'
 import { Internships } from './components/Internships'
-import { PrereqVisualizer } from './components/PrereqVisualizer'
+// PrereqVisualizer is now integrated into CompletedCourses
 import { useTheme } from './components/ThemeToggle'
 
 export default function App() {
@@ -255,8 +255,6 @@ function AuthenticatedApp({
             for (const c of currentQ.courses) mySchedule.removeCourse(c.course_code)
           }
         }} totalUnits={fourYearPlan.totalUnits} />
-    if (activeView === 'prereqs')
-      return <PrereqVisualizer completedCodes={completedCourses.completed.map(c => c.course_code)} />
     if (activeView === 'live') return <LiveStatus />
     if (activeView === 'scheduler')
       return <AutoScheduler model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />

@@ -1,247 +1,333 @@
-// UCSD Prerequisite Chain Data
-// Each entry: course → list of direct prerequisites (must complete ALL to take this course)
+// UCSD Prerequisite Chain Data — comprehensive coverage for major departments
 // Source: UCSD General Catalog 2025-2026
 
 export interface PrereqNode {
-  id: string           // e.g. "CSE 12"
-  prereqs: string[]    // direct prerequisites (AND — need all)
-  prereqsOr?: string[][] // OR groups — need one from each group
-  coreq?: string[]     // corequisites (can take concurrently)
-  description?: string
-  units?: number
+  id: string
+  prereqs: string[]    // direct prerequisites (AND)
+  coreq?: string[]
 }
 
 export type PrereqGraph = Record<string, PrereqNode>
 
-// ── CSE (Computer Science & Engineering) ──────────────────────────────────
-
-const CSE: PrereqGraph = {
-  'CSE 8A':  { id: 'CSE 8A',  prereqs: [], units: 4, description: 'Intro to Programming I' },
-  'CSE 8B':  { id: 'CSE 8B',  prereqs: ['CSE 8A'], units: 4, description: 'Intro to Programming II' },
-  'CSE 11':  { id: 'CSE 11',  prereqs: [], units: 4, description: 'Intro to Programming & Computational Problem-Solving' },
-  'CSE 12':  { id: 'CSE 12',  prereqs: ['CSE 11'], units: 4, description: 'Basic Data Structures & Object-Oriented Design' },
-  'CSE 15':  { id: 'CSE 15',  prereqs: ['CSE 11'], units: 4, description: 'Engineering Computation' },
-  'CSE 20':  { id: 'CSE 20',  prereqs: ['CSE 11'], units: 4, description: 'Discrete Mathematics' },
-  'CSE 21':  { id: 'CSE 21',  prereqs: ['CSE 20'], units: 4, description: 'Mathematics for Algorithms & Systems' },
-  'CSE 30':  { id: 'CSE 30',  prereqs: ['CSE 12'], units: 4, description: 'Computer Organization & Systems Programming' },
-  'CSE 100': { id: 'CSE 100', prereqs: ['CSE 12', 'CSE 21'], units: 4, description: 'Advanced Data Structures' },
-  'CSE 101': { id: 'CSE 101', prereqs: ['CSE 100'], units: 4, description: 'Design & Analysis of Algorithms' },
-  'CSE 105': { id: 'CSE 105', prereqs: ['CSE 12', 'CSE 21'], units: 4, description: 'Theory of Computation' },
-  'CSE 107': { id: 'CSE 107', prereqs: ['CSE 21'], units: 4, description: 'Intro to Modern Cryptography' },
-  'CSE 110': { id: 'CSE 110', prereqs: ['CSE 100'], units: 4, description: 'Software Engineering' },
-  'CSE 120': { id: 'CSE 120', prereqs: ['CSE 30', 'CSE 100'], units: 4, description: 'Operating Systems' },
-  'CSE 123': { id: 'CSE 123', prereqs: ['CSE 30', 'CSE 100'], units: 4, description: 'Computer Networks' },
-  'CSE 124': { id: 'CSE 124', prereqs: ['CSE 123'], units: 4, description: 'Networked Services' },
-  'CSE 127': { id: 'CSE 127', prereqs: ['CSE 30', 'CSE 100'], units: 4, description: 'Computer Security' },
-  'CSE 130': { id: 'CSE 130', prereqs: ['CSE 100', 'CSE 105'], units: 4, description: 'Programming Languages' },
-  'CSE 131': { id: 'CSE 131', prereqs: ['CSE 100'], units: 4, description: 'Compiler Construction' },
-  'CSE 132A':{ id: 'CSE 132A',prereqs: ['CSE 100'], units: 4, description: 'Database System Principles' },
-  'CSE 134B':{ id: 'CSE 134B',prereqs: ['CSE 100'], units: 4, description: 'Web Client Languages' },
-  'CSE 135': { id: 'CSE 135', prereqs: ['CSE 134B'], units: 4, description: 'Server-Side Web Applications' },
-  'CSE 140': { id: 'CSE 140', prereqs: ['CSE 30'], units: 4, description: 'Components & Design Techniques for Digital Systems' },
-  'CSE 140L':{ id: 'CSE 140L',prereqs: ['CSE 140'], coreq: ['CSE 140'], units: 2, description: 'Digital Systems Laboratory' },
-  'CSE 141': { id: 'CSE 141', prereqs: ['CSE 30', 'CSE 140'], units: 4, description: 'Intro to Computer Architecture' },
-  'CSE 141L':{ id: 'CSE 141L',prereqs: ['CSE 141'], coreq: ['CSE 141'], units: 2, description: 'Project in Computer Architecture' },
-  'CSE 142': { id: 'CSE 142', prereqs: ['CSE 141'], units: 4, description: 'Computer Architecture: A Modern Approach' },
-  'CSE 145': { id: 'CSE 145', prereqs: ['CSE 100'], units: 4, description: 'Embedded System Design Project' },
-  'CSE 150A':{ id: 'CSE 150A',prereqs: ['CSE 100'], units: 4, description: 'Intro to AI: Probabilistic Reasoning' },
-  'CSE 150B':{ id: 'CSE 150B',prereqs: ['CSE 100'], units: 4, description: 'Intro to AI: Search & Reasoning' },
-  'CSE 151A':{ id: 'CSE 151A',prereqs: ['CSE 100'], units: 4, description: 'Intro to Machine Learning' },
-  'CSE 151B':{ id: 'CSE 151B',prereqs: ['CSE 151A'], units: 4, description: 'Deep Learning' },
-  'CSE 152A':{ id: 'CSE 152A',prereqs: ['CSE 100'], units: 4, description: 'Intro to Computer Vision' },
-  'CSE 156': { id: 'CSE 156', prereqs: ['CSE 100'], units: 4, description: 'Statistical NLP' },
-  'CSE 158': { id: 'CSE 158', prereqs: ['CSE 100'], units: 4, description: 'Recommender Systems & Web Mining' },
-  'CSE 160': { id: 'CSE 160', prereqs: ['CSE 100'], units: 4, description: 'Intro to Parallel Computing' },
-  'CSE 167': { id: 'CSE 167', prereqs: ['CSE 100'], units: 4, description: 'Computer Graphics' },
+// Helper to define nodes concisely: [courseId, ...prereqs]
+function p(id: string, ...prereqs: string[]): [string, PrereqNode] {
+  return [id, { id, prereqs }]
 }
+
+// ── CSE ───────────────────────────────────────────────────────────────────
+const CSE = Object.fromEntries([
+  p('CSE 8A'), p('CSE 8B', 'CSE 8A'), p('CSE 11'), p('CSE 12', 'CSE 11'),
+  p('CSE 15', 'CSE 11'), p('CSE 20', 'CSE 11'), p('CSE 21', 'CSE 20'),
+  p('CSE 30', 'CSE 12'), p('CSE 100', 'CSE 12', 'CSE 21'),
+  p('CSE 101', 'CSE 100'), p('CSE 105', 'CSE 12', 'CSE 21'),
+  p('CSE 107', 'CSE 21'), p('CSE 110', 'CSE 100'),
+  p('CSE 112', 'CSE 110'), p('CSE 120', 'CSE 30', 'CSE 100'),
+  p('CSE 123', 'CSE 30', 'CSE 100'), p('CSE 124', 'CSE 123'),
+  p('CSE 125', 'CSE 100'), p('CSE 127', 'CSE 30', 'CSE 100'),
+  p('CSE 130', 'CSE 100', 'CSE 105'), p('CSE 131', 'CSE 100'),
+  p('CSE 132A', 'CSE 100'), p('CSE 132B', 'CSE 132A'),
+  p('CSE 134B', 'CSE 100'), p('CSE 135', 'CSE 134B'),
+  p('CSE 136', 'CSE 100'), p('CSE 138', 'CSE 100'),
+  p('CSE 140', 'CSE 30'), p('CSE 140L', 'CSE 140'),
+  p('CSE 141', 'CSE 30', 'CSE 140'), p('CSE 141L', 'CSE 141'),
+  p('CSE 142', 'CSE 141'), p('CSE 143', 'CSE 141'),
+  p('CSE 144', 'CSE 100'), p('CSE 145', 'CSE 100'),
+  p('CSE 148', 'CSE 100'), p('CSE 150A', 'CSE 100'),
+  p('CSE 150B', 'CSE 100'), p('CSE 151A', 'CSE 100'),
+  p('CSE 151B', 'CSE 151A'), p('CSE 152A', 'CSE 100'),
+  p('CSE 152B', 'CSE 152A'), p('CSE 153', 'CSE 100'),
+  p('CSE 154', 'CSE 100'), p('CSE 156', 'CSE 100'),
+  p('CSE 158', 'CSE 100'), p('CSE 160', 'CSE 100'),
+  p('CSE 163', 'CSE 100'), p('CSE 164', 'CSE 163'),
+  p('CSE 166', 'CSE 100'), p('CSE 167', 'CSE 100'),
+  p('CSE 168', 'CSE 167'), p('CSE 169', 'CSE 167'),
+  p('CSE 170', 'CSE 100'), p('CSE 175', 'CSE 100'),
+  p('CSE 176', 'CSE 100'), p('CSE 180', 'CSE 100'),
+  p('CSE 181', 'CSE 100'), p('CSE 182', 'CSE 100'),
+  p('CSE 184', 'CSE 100'), p('CSE 185', 'CSE 100'),
+  p('CSE 189', 'CSE 100'), p('CSE 190', 'CSE 100'), p('CSE 191', 'CSE 100'),
+])
 
 // ── MATH ──────────────────────────────────────────────────────────────────
-
-const MATH: PrereqGraph = {
-  'MATH 4C':  { id: 'MATH 4C',  prereqs: [], units: 4, description: 'Precalculus' },
-  'MATH 10A': { id: 'MATH 10A', prereqs: [], units: 4, description: 'Calculus I' },
-  'MATH 10B': { id: 'MATH 10B', prereqs: ['MATH 10A'], units: 4, description: 'Calculus II' },
-  'MATH 10C': { id: 'MATH 10C', prereqs: ['MATH 10B'], units: 4, description: 'Calculus III' },
-  'MATH 11':  { id: 'MATH 11',  prereqs: ['MATH 10A'], units: 5, description: 'Calculus-Based Probability & Statistics' },
-  'MATH 18':  { id: 'MATH 18',  prereqs: ['MATH 20A'], units: 4, description: 'Linear Algebra' },
-  'MATH 20A': { id: 'MATH 20A', prereqs: [], units: 4, description: 'Calculus for Science & Engineering' },
-  'MATH 20B': { id: 'MATH 20B', prereqs: ['MATH 20A'], units: 4, description: 'Calculus for Science & Engineering' },
-  'MATH 20C': { id: 'MATH 20C', prereqs: ['MATH 20B'], units: 4, description: 'Calculus & Analytic Geometry for Science & Engineering' },
-  'MATH 20D': { id: 'MATH 20D', prereqs: ['MATH 20C', 'MATH 18'], units: 4, description: 'Intro to Differential Equations' },
-  'MATH 20E': { id: 'MATH 20E', prereqs: ['MATH 20C', 'MATH 18'], units: 4, description: 'Vector Calculus' },
-  'MATH 100A':{ id: 'MATH 100A',prereqs: ['MATH 18', 'MATH 20C'], units: 4, description: 'Abstract Algebra I' },
-  'MATH 100B':{ id: 'MATH 100B',prereqs: ['MATH 100A'], units: 4, description: 'Abstract Algebra II' },
-  'MATH 100C':{ id: 'MATH 100C',prereqs: ['MATH 100B'], units: 4, description: 'Abstract Algebra III' },
-  'MATH 109': { id: 'MATH 109', prereqs: ['MATH 18', 'MATH 20C'], units: 4, description: 'Mathematical Reasoning' },
-  'MATH 140A':{ id: 'MATH 140A',prereqs: ['MATH 109', 'MATH 20C', 'MATH 18'], units: 4, description: 'Foundations of Real Analysis I' },
-  'MATH 140B':{ id: 'MATH 140B',prereqs: ['MATH 140A'], units: 4, description: 'Foundations of Real Analysis II' },
-  'MATH 142A':{ id: 'MATH 142A',prereqs: ['MATH 20C', 'MATH 18'], units: 4, description: 'Intro to Analysis I' },
-  'MATH 142B':{ id: 'MATH 142B',prereqs: ['MATH 142A'], units: 4, description: 'Intro to Analysis II' },
-  'MATH 170A':{ id: 'MATH 170A',prereqs: ['MATH 18', 'MATH 20C'], units: 4, description: 'Intro to Numerical Analysis: Linear Algebra' },
-  'MATH 180A':{ id: 'MATH 180A',prereqs: ['MATH 20C', 'MATH 18'], units: 4, description: 'Intro to Probability' },
-  'MATH 180B':{ id: 'MATH 180B',prereqs: ['MATH 180A'], units: 4, description: 'Intro to Stochastic Processes' },
-  'MATH 183': { id: 'MATH 183', prereqs: ['MATH 180A'], units: 4, description: 'Statistical Methods' },
-}
-
-// ── ECE (Electrical & Computer Engineering) ───────────────────────────────
-
-const ECE: PrereqGraph = {
-  'ECE 15':   { id: 'ECE 15',   prereqs: [], units: 4, description: 'Engineering Computation' },
-  'ECE 25':   { id: 'ECE 25',   prereqs: [], units: 4, description: 'Intro to Digital Design' },
-  'ECE 35':   { id: 'ECE 35',   prereqs: ['MATH 20C', 'PHYS 2B'], units: 4, description: 'Intro to Analog Design' },
-  'ECE 45':   { id: 'ECE 45',   prereqs: ['MATH 20D', 'ECE 35'], units: 4, description: 'Circuits & Systems' },
-  'ECE 65':   { id: 'ECE 65',   prereqs: ['ECE 25', 'ECE 35'], units: 4, description: 'Components & Circuits Laboratory' },
-  'ECE 100':  { id: 'ECE 100',  prereqs: ['ECE 45'], units: 4, description: 'Linear Electronic Systems' },
-  'ECE 101':  { id: 'ECE 101',  prereqs: ['ECE 45'], units: 4, description: 'Linear Systems Fundamentals' },
-  'ECE 107':  { id: 'ECE 107',  prereqs: ['MATH 20E', 'PHYS 2C'], units: 4, description: 'Electromagnetism' },
-  'ECE 109':  { id: 'ECE 109',  prereqs: ['MATH 20C'], units: 4, description: 'Engineering Probability & Statistics' },
-  'ECE 111':  { id: 'ECE 111',  prereqs: ['ECE 25', 'ECE 65'], units: 4, description: 'Advanced Digital Design Project' },
-  'ECE 140A': { id: 'ECE 140A', prereqs: ['ECE 15'], units: 4, description: 'Components of the Internet of Things' },
-  'ECE 140B': { id: 'ECE 140B', prereqs: ['ECE 140A'], units: 4, description: 'Internet of Things: Build Your Startup' },
-  'ECE 161A': { id: 'ECE 161A', prereqs: ['ECE 101'], units: 4, description: 'Intro to Digital Signal Processing' },
-  'ECE 171A': { id: 'ECE 171A', prereqs: ['ECE 101'], units: 4, description: 'Linear Control System Theory' },
-  'ECE 174':  { id: 'ECE 174',  prereqs: ['MATH 18', 'ECE 109'], units: 4, description: 'Intro to Linear & Nonlinear Optimization' },
-}
+const MATH = Object.fromEntries([
+  p('MATH 4C'), p('MATH 10A'), p('MATH 10B', 'MATH 10A'), p('MATH 10C', 'MATH 10B'),
+  p('MATH 11', 'MATH 10A'), p('MATH 15A'), p('MATH 15B', 'MATH 15A'),
+  p('MATH 18', 'MATH 20A'), p('MATH 20A'), p('MATH 20B', 'MATH 20A'),
+  p('MATH 20C', 'MATH 20B'), p('MATH 20D', 'MATH 20C', 'MATH 18'),
+  p('MATH 20E', 'MATH 20C', 'MATH 18'), p('MATH 31AH'),
+  p('MATH 31BH', 'MATH 31AH'), p('MATH 31CH', 'MATH 31BH'),
+  p('MATH 100A', 'MATH 18', 'MATH 20C'), p('MATH 100B', 'MATH 100A'),
+  p('MATH 100C', 'MATH 100B'), p('MATH 102', 'MATH 100A'),
+  p('MATH 103A', 'MATH 100A'), p('MATH 103B', 'MATH 103A'),
+  p('MATH 104A', 'MATH 20D'), p('MATH 104B', 'MATH 104A'),
+  p('MATH 109', 'MATH 18', 'MATH 20C'),
+  p('MATH 120A', 'MATH 109', 'MATH 20C'), p('MATH 120B', 'MATH 120A'),
+  p('MATH 130', 'MATH 100A'), p('MATH 140A', 'MATH 109', 'MATH 20C', 'MATH 18'),
+  p('MATH 140B', 'MATH 140A'), p('MATH 140C', 'MATH 140B'),
+  p('MATH 142A', 'MATH 20C', 'MATH 18'), p('MATH 142B', 'MATH 142A'),
+  p('MATH 150A', 'MATH 20D', 'MATH 18'), p('MATH 150B', 'MATH 150A'),
+  p('MATH 154', 'MATH 20D'), p('MATH 155A', 'MATH 20D'),
+  p('MATH 155B', 'MATH 155A'),
+  p('MATH 160A', 'MATH 109'), p('MATH 160B', 'MATH 160A'),
+  p('MATH 163', 'MATH 20D'), p('MATH 170A', 'MATH 18', 'MATH 20C'),
+  p('MATH 170B', 'MATH 170A'), p('MATH 170C', 'MATH 170B'),
+  p('MATH 171A', 'MATH 18', 'MATH 20C'), p('MATH 171B', 'MATH 171A'),
+  p('MATH 174', 'MATH 18', 'MATH 20C'), p('MATH 175', 'MATH 174'),
+  p('MATH 180A', 'MATH 20C', 'MATH 18'), p('MATH 180B', 'MATH 180A'),
+  p('MATH 180C', 'MATH 180B'), p('MATH 181A', 'MATH 180A'),
+  p('MATH 181B', 'MATH 181A'), p('MATH 183', 'MATH 180A'),
+  p('MATH 184', 'MATH 180A'), p('MATH 185', 'MATH 180A'),
+  p('MATH 187A', 'MATH 18', 'MATH 20C'), p('MATH 187B', 'MATH 187A'),
+  p('MATH 189', 'MATH 18', 'MATH 20C'),
+])
 
 // ── PHYS ──────────────────────────────────────────────────────────────────
+const PHYS = Object.fromEntries([
+  p('PHYS 1A', 'MATH 10A'), p('PHYS 1B', 'PHYS 1A', 'MATH 10B'),
+  p('PHYS 1C', 'PHYS 1B', 'MATH 10C'),
+  p('PHYS 1AL', 'PHYS 1A'), p('PHYS 1BL', 'PHYS 1B'), p('PHYS 1CL', 'PHYS 1C'),
+  p('PHYS 2A', 'MATH 20A'), p('PHYS 2B', 'PHYS 2A', 'MATH 20B'),
+  p('PHYS 2C', 'PHYS 2B', 'MATH 20C'), p('PHYS 2D', 'PHYS 2C'),
+  p('PHYS 2BL', 'PHYS 2B'), p('PHYS 2CL', 'PHYS 2C'), p('PHYS 2DL', 'PHYS 2D'),
+  p('PHYS 4A'), p('PHYS 4B', 'PHYS 4A'), p('PHYS 4C', 'PHYS 4B'),
+  p('PHYS 4D', 'PHYS 4C'), p('PHYS 4E', 'PHYS 4D'),
+  p('PHYS 100A', 'PHYS 2D', 'MATH 20D', 'MATH 18'),
+  p('PHYS 100B', 'PHYS 100A'), p('PHYS 100C', 'PHYS 100B'),
+  p('PHYS 105A', 'PHYS 2A', 'MATH 20D', 'MATH 18'),
+  p('PHYS 105B', 'PHYS 105A'),
+  p('PHYS 110A', 'PHYS 2D', 'MATH 20D'), p('PHYS 110B', 'PHYS 110A'),
+  p('PHYS 111', 'PHYS 110A'),
+  p('PHYS 120', 'PHYS 2D', 'MATH 20D'),
+  p('PHYS 130', 'PHYS 100A', 'PHYS 110A'),
+  p('PHYS 140A', 'PHYS 120'), p('PHYS 140B', 'PHYS 140A'),
+  p('PHYS 152', 'PHYS 110A'), p('PHYS 160', 'PHYS 2D'),
+  p('PHYS 161', 'PHYS 160'), p('PHYS 162', 'PHYS 161'),
+  p('PHYS 163', 'PHYS 110A'),
+  p('PHYS 170', 'PHYS 110A'), p('PHYS 171', 'PHYS 170'),
+  p('PHYS 173', 'PHYS 100B', 'PHYS 110A'),
+])
 
-const PHYS: PrereqGraph = {
-  'PHYS 1A':  { id: 'PHYS 1A',  prereqs: ['MATH 10A'], units: 4, description: 'Mechanics' },
-  'PHYS 1B':  { id: 'PHYS 1B',  prereqs: ['PHYS 1A', 'MATH 10B'], units: 4, description: 'Electricity & Magnetism' },
-  'PHYS 1C':  { id: 'PHYS 1C',  prereqs: ['PHYS 1B', 'MATH 10C'], units: 4, description: 'Waves, Optics & Modern Physics' },
-  'PHYS 2A':  { id: 'PHYS 2A',  prereqs: ['MATH 20A'], units: 4, description: 'Mechanics' },
-  'PHYS 2B':  { id: 'PHYS 2B',  prereqs: ['PHYS 2A', 'MATH 20B'], units: 4, description: 'Electricity & Magnetism' },
-  'PHYS 2C':  { id: 'PHYS 2C',  prereqs: ['PHYS 2B', 'MATH 20C'], units: 4, description: 'Fluids, Waves, Thermodynamics & Optics' },
-  'PHYS 2D':  { id: 'PHYS 2D',  prereqs: ['PHYS 2C'], units: 4, description: 'Relativity & Quantum Physics' },
-  'PHYS 100A':{ id: 'PHYS 100A',prereqs: ['PHYS 2D', 'MATH 20D', 'MATH 18'], units: 4, description: 'Electromagnetism I' },
-  'PHYS 105A':{ id: 'PHYS 105A',prereqs: ['PHYS 2A', 'MATH 20D', 'MATH 18'], units: 4, description: 'Classical Mechanics' },
-  'PHYS 110A':{ id: 'PHYS 110A',prereqs: ['PHYS 2D', 'MATH 20D'], units: 4, description: 'Quantum Mechanics I' },
-  'PHYS 120': { id: 'PHYS 120', prereqs: ['PHYS 2D', 'MATH 20D'], units: 4, description: 'Thermodynamics & Statistical Mechanics' },
-  'PHYS 140A':{ id: 'PHYS 140A',prereqs: ['PHYS 120'], units: 4, description: 'Solid State Physics' },
-}
+// ── ECE ───────────────────────────────────────────────────────────────────
+const ECE = Object.fromEntries([
+  p('ECE 15'), p('ECE 16', 'ECE 15'),
+  p('ECE 25'), p('ECE 35', 'MATH 20C', 'PHYS 2B'),
+  p('ECE 45', 'MATH 20D', 'ECE 35'), p('ECE 65', 'ECE 25', 'ECE 35'),
+  p('ECE 100', 'ECE 45'), p('ECE 101', 'ECE 45'),
+  p('ECE 102', 'ECE 100'), p('ECE 103', 'ECE 100'),
+  p('ECE 107', 'MATH 20E', 'PHYS 2C'), p('ECE 109', 'MATH 20C'),
+  p('ECE 110', 'ECE 101'), p('ECE 111', 'ECE 25', 'ECE 65'),
+  p('ECE 115', 'ECE 111'), p('ECE 118', 'ECE 111'),
+  p('ECE 120', 'ECE 101'), p('ECE 121', 'ECE 101'),
+  p('ECE 123', 'ECE 101'), p('ECE 124', 'ECE 107'),
+  p('ECE 125', 'ECE 107'), p('ECE 128', 'ECE 107'),
+  p('ECE 134', 'ECE 100'), p('ECE 135', 'ECE 100'),
+  p('ECE 136', 'ECE 100'),
+  p('ECE 140A', 'ECE 15'), p('ECE 140B', 'ECE 140A'),
+  p('ECE 141', 'ECE 140A'), p('ECE 143', 'ECE 16'),
+  p('ECE 144', 'ECE 100'), p('ECE 148', 'ECE 16'),
+  p('ECE 150', 'ECE 109'), p('ECE 155', 'ECE 100'),
+  p('ECE 158A', 'ECE 101'), p('ECE 158B', 'ECE 158A'),
+  p('ECE 161A', 'ECE 101'), p('ECE 161B', 'ECE 161A'), p('ECE 161C', 'ECE 161B'),
+  p('ECE 163', 'ECE 101'), p('ECE 164', 'ECE 161A'),
+  p('ECE 165', 'ECE 107'), p('ECE 166', 'ECE 107'),
+  p('ECE 171A', 'ECE 101'), p('ECE 171B', 'ECE 171A'),
+  p('ECE 172A', 'ECE 101'), p('ECE 174', 'MATH 18', 'ECE 109'),
+  p('ECE 175A', 'ECE 109', 'MATH 18'), p('ECE 175B', 'ECE 175A'),
+  p('ECE 176', 'ECE 175A'), p('ECE 180', 'ECE 109'),
+  p('ECE 181', 'ECE 107'), p('ECE 182', 'ECE 107'),
+  p('ECE 183', 'ECE 100'), p('ECE 184', 'ECE 101'),
+  p('ECE 185', 'ECE 101'), p('ECE 187', 'ECE 101'),
+])
 
-// ── BILD / Bio ────────────────────────────────────────────────────────────
-
-const BIO: PrereqGraph = {
-  'BILD 1':   { id: 'BILD 1',   prereqs: [], units: 4, description: 'The Cell' },
-  'BILD 2':   { id: 'BILD 2',   prereqs: [], units: 4, description: 'Multicellular Life' },
-  'BILD 3':   { id: 'BILD 3',   prereqs: [], units: 4, description: 'Organismic & Evolutionary Biology' },
-  'BILD 4':   { id: 'BILD 4',   prereqs: ['BILD 1'], units: 4, description: 'Bioinformatics' },
-  'BICD 100': { id: 'BICD 100', prereqs: ['BILD 1'], units: 4, description: 'Genetics' },
-  'BICD 110': { id: 'BICD 110', prereqs: ['BICD 100'], units: 4, description: 'Cell Biology' },
-  'BIBC 100': { id: 'BIBC 100', prereqs: ['BILD 1', 'CHEM 6C'], units: 4, description: 'Structural Biochemistry' },
-  'BIBC 102': { id: 'BIBC 102', prereqs: ['BIBC 100'], units: 4, description: 'Metabolic Biochemistry' },
-  'BIPN 100': { id: 'BIPN 100', prereqs: ['BILD 1', 'BILD 2'], units: 4, description: 'Human Physiology I' },
-  'BIPN 102': { id: 'BIPN 102', prereqs: ['BIPN 100'], units: 4, description: 'Human Physiology II' },
-  'BIMM 100': { id: 'BIMM 100', prereqs: ['BICD 100'], units: 4, description: 'Molecular Biology' },
-  'BIMM 101': { id: 'BIMM 101', prereqs: ['BIMM 100'], units: 4, description: 'Recombinant DNA Techniques' },
-}
+// ── DSC ───────────────────────────────────────────────────────────────────
+const DSC = Object.fromEntries([
+  p('DSC 10'), p('DSC 20', 'DSC 10'), p('DSC 30', 'DSC 20'),
+  p('DSC 40A', 'DSC 10', 'MATH 20C'), p('DSC 40B', 'DSC 20', 'DSC 40A'),
+  p('DSC 80', 'DSC 30', 'DSC 40A'), p('DSC 95'),
+  p('DSC 100', 'DSC 80', 'DSC 40B'), p('DSC 102', 'DSC 100'),
+  p('DSC 106', 'DSC 80'), p('DSC 120', 'DSC 80'),
+  p('DSC 140A', 'DSC 80', 'DSC 40B', 'MATH 18'),
+  p('DSC 140B', 'DSC 140A'), p('DSC 148', 'DSC 80', 'DSC 40B'),
+  p('DSC 167', 'DSC 80'), p('DSC 170', 'DSC 80'),
+  p('DSC 180A', 'DSC 80', 'DSC 40B'), p('DSC 180B', 'DSC 180A'),
+  p('DSC 190'),
+])
 
 // ── CHEM ──────────────────────────────────────────────────────────────────
+const CHEM = Object.fromEntries([
+  p('CHEM 4'), p('CHEM 6A'), p('CHEM 6B', 'CHEM 6A'), p('CHEM 6C', 'CHEM 6B'),
+  p('CHEM 6AH'), p('CHEM 6BH', 'CHEM 6AH'), p('CHEM 6CH', 'CHEM 6BH'),
+  p('CHEM 7L', 'CHEM 6A'), p('CHEM 7LM', 'CHEM 6B'),
+  p('CHEM 40A', 'CHEM 6C'), p('CHEM 40B', 'CHEM 40A'), p('CHEM 40C', 'CHEM 40B'),
+  p('CHEM 40AH', 'CHEM 6C'), p('CHEM 40BH', 'CHEM 40AH'), p('CHEM 40CH', 'CHEM 40BH'),
+  p('CHEM 43A', 'CHEM 6C'), p('CHEM 43B', 'CHEM 43A'),
+  p('CHEM 100A', 'CHEM 6C', 'MATH 20B', 'PHYS 2A'),
+  p('CHEM 100B', 'CHEM 100A', 'MATH 20C'),
+  p('CHEM 100C', 'CHEM 100B'),
+  p('CHEM 105A', 'CHEM 100A'), p('CHEM 105B', 'CHEM 105A'),
+  p('CHEM 108', 'CHEM 6C'), p('CHEM 109', 'CHEM 6C'),
+  p('CHEM 114A', 'CHEM 40C'), p('CHEM 114B', 'CHEM 114A'),
+  p('CHEM 114C', 'CHEM 114B'), p('CHEM 114D', 'CHEM 114C'),
+  p('CHEM 120A', 'CHEM 6C'), p('CHEM 120B', 'CHEM 120A'),
+  p('CHEM 126', 'CHEM 100A'), p('CHEM 127', 'CHEM 100A'),
+  p('CHEM 130', 'CHEM 6C'), p('CHEM 131', 'CHEM 130'),
+  p('CHEM 132', 'CHEM 131'),
+  p('CHEM 140A', 'CHEM 40B'), p('CHEM 140B', 'CHEM 140A'),
+  p('CHEM 140C', 'CHEM 140B'),
+  p('CHEM 143A', 'CHEM 40B'), p('CHEM 143B', 'CHEM 143A'),
+  p('CHEM 143C', 'CHEM 143B'),
+  p('CHEM 150', 'CHEM 40C'), p('CHEM 155', 'CHEM 40C'),
+  p('CHEM 164', 'CHEM 100B'), p('CHEM 165', 'CHEM 100B'),
+  p('CHEM 167', 'CHEM 100B'),
+])
 
-const CHEM: PrereqGraph = {
-  'CHEM 4':   { id: 'CHEM 4',   prereqs: [], units: 4, description: 'Intro General Chemistry' },
-  'CHEM 6A':  { id: 'CHEM 6A',  prereqs: [], units: 4, description: 'General Chemistry I' },
-  'CHEM 6B':  { id: 'CHEM 6B',  prereqs: ['CHEM 6A'], units: 4, description: 'General Chemistry II' },
-  'CHEM 6C':  { id: 'CHEM 6C',  prereqs: ['CHEM 6B'], units: 4, description: 'General Chemistry III' },
-  'CHEM 40A': { id: 'CHEM 40A', prereqs: ['CHEM 6C'], units: 4, description: 'Organic Chemistry I' },
-  'CHEM 40B': { id: 'CHEM 40B', prereqs: ['CHEM 40A'], units: 4, description: 'Organic Chemistry II' },
-  'CHEM 40C': { id: 'CHEM 40C', prereqs: ['CHEM 40B'], units: 4, description: 'Organic Chemistry III' },
-  'CHEM 43A': { id: 'CHEM 43A', prereqs: ['CHEM 6C'], units: 2, description: 'Organic Chemistry Lab I' },
-  'CHEM 100A':{ id: 'CHEM 100A',prereqs: ['CHEM 6C', 'MATH 20B', 'PHYS 2A'], units: 4, description: 'Physical Chemistry I: Thermodynamics' },
-  'CHEM 100B':{ id: 'CHEM 100B',prereqs: ['CHEM 100A', 'MATH 20C'], units: 4, description: 'Physical Chemistry II: Quantum Mechanics' },
-  'CHEM 114A':{ id: 'CHEM 114A',prereqs: ['CHEM 40C', 'BIBC 100'], units: 4, description: 'Biochemistry I' },
-}
+// ── BIO ───────────────────────────────────────────────────────────────────
+const BIO = Object.fromEntries([
+  p('BILD 1'), p('BILD 2'), p('BILD 3'), p('BILD 4', 'BILD 1'),
+  p('BILD 7', 'BILD 1'), p('BILD 10'),
+  p('BICD 100', 'BILD 1'), p('BICD 110', 'BICD 100'),
+  p('BICD 120', 'BICD 100'), p('BICD 130', 'BICD 100'),
+  p('BICD 140', 'BICD 100'),
+  p('BIBC 100', 'BILD 1', 'CHEM 6C'), p('BIBC 102', 'BIBC 100'),
+  p('BIBC 103', 'BIBC 100'), p('BIBC 110', 'BIBC 100'),
+  p('BIBC 120', 'BIBC 100'),
+  p('BIPN 100', 'BILD 1', 'BILD 2'), p('BIPN 102', 'BIPN 100'),
+  p('BIPN 105', 'BIPN 100'), p('BIPN 106', 'BIPN 100'),
+  p('BIPN 108', 'BIPN 100'), p('BIPN 140', 'BIPN 100'),
+  p('BIPN 142', 'BIPN 100'),
+  p('BIMM 100', 'BICD 100'), p('BIMM 101', 'BIMM 100'),
+  p('BIMM 110', 'BIMM 100'), p('BIMM 112', 'BIMM 100'),
+  p('BIMM 114', 'BIMM 100'), p('BIMM 120', 'BIMM 100'),
+  p('BIMM 121', 'BIMM 100'), p('BIMM 122', 'BIMM 100'),
+  p('BIMM 130', 'BICD 100'),
+  p('BIEB 100', 'BILD 3'), p('BIEB 102', 'BILD 3'),
+  p('BIEB 110', 'BILD 3'), p('BIEB 120', 'BILD 3'),
+  p('BIEB 121', 'BIEB 120'), p('BIEB 126', 'BILD 3'),
+  p('BIEB 128', 'BILD 3'), p('BIEB 130', 'BILD 3'),
+  p('BIEB 132', 'BILD 3'), p('BIEB 140', 'BILD 3'),
+  p('BIEB 150', 'BILD 3'),
+])
 
 // ── ECON ──────────────────────────────────────────────────────────────────
-
-const ECON: PrereqGraph = {
-  'ECON 1':   { id: 'ECON 1',   prereqs: [], units: 4, description: 'Principles of Microeconomics' },
-  'ECON 2':   { id: 'ECON 2',   prereqs: [], units: 4, description: 'Market Imperfections & Policy' },
-  'ECON 3':   { id: 'ECON 3',   prereqs: [], units: 4, description: 'Principles of Macroeconomics' },
-  'ECON 4':   { id: 'ECON 4',   prereqs: [], units: 4, description: 'Financial Accounting' },
-  'ECON 100A':{ id: 'ECON 100A',prereqs: ['ECON 1', 'MATH 20A'], units: 4, description: 'Microeconomics A' },
-  'ECON 100B':{ id: 'ECON 100B',prereqs: ['ECON 100A', 'MATH 20B'], units: 4, description: 'Microeconomics B' },
-  'ECON 100C':{ id: 'ECON 100C',prereqs: ['ECON 100B', 'MATH 20C'], units: 4, description: 'Microeconomics C' },
-  'ECON 110A':{ id: 'ECON 110A',prereqs: ['ECON 3', 'MATH 20A'], units: 4, description: 'Macroeconomics A' },
-  'ECON 110B':{ id: 'ECON 110B',prereqs: ['ECON 110A', 'MATH 20B'], units: 4, description: 'Macroeconomics B' },
-  'ECON 120A':{ id: 'ECON 120A',prereqs: ['ECON 1', 'MATH 20A'], units: 4, description: 'Econometrics A' },
-  'ECON 120B':{ id: 'ECON 120B',prereqs: ['ECON 120A', 'MATH 20B'], units: 4, description: 'Econometrics B' },
-  'ECON 120C':{ id: 'ECON 120C',prereqs: ['ECON 120B'], units: 4, description: 'Econometrics C' },
-  'ECON 130': { id: 'ECON 130', prereqs: ['ECON 100B'], units: 4, description: 'Public Policy' },
-  'ECON 170': { id: 'ECON 170', prereqs: ['ECON 100A'], units: 4, description: 'Law & Economics' },
-  'ECON 171': { id: 'ECON 171', prereqs: ['ECON 100A'], units: 4, description: 'Decisions Under Uncertainty' },
-  'ECON 172A':{ id: 'ECON 172A',prereqs: ['ECON 100A', 'ECON 120A'], units: 4, description: 'Operations Research A' },
-}
+const ECON = Object.fromEntries([
+  p('ECON 1'), p('ECON 2'), p('ECON 3'), p('ECON 4'),
+  p('ECON 100A', 'ECON 1', 'MATH 20A'), p('ECON 100B', 'ECON 100A', 'MATH 20B'),
+  p('ECON 100C', 'ECON 100B', 'MATH 20C'),
+  p('ECON 110A', 'ECON 3', 'MATH 20A'), p('ECON 110B', 'ECON 110A', 'MATH 20B'),
+  p('ECON 120A', 'ECON 1', 'MATH 20A'), p('ECON 120B', 'ECON 120A', 'MATH 20B'),
+  p('ECON 120C', 'ECON 120B'),
+  p('ECON 130', 'ECON 100B'), p('ECON 131', 'ECON 100B'),
+  p('ECON 135', 'ECON 100B'), p('ECON 138', 'ECON 120B'),
+  p('ECON 140', 'ECON 100B'), p('ECON 142', 'ECON 100B'),
+  p('ECON 150', 'ECON 100B'), p('ECON 155', 'ECON 110B'),
+  p('ECON 160', 'ECON 100B'), p('ECON 170', 'ECON 100A'),
+  p('ECON 171', 'ECON 100A'), p('ECON 172A', 'ECON 100A', 'ECON 120A'),
+  p('ECON 172B', 'ECON 172A'), p('ECON 173A', 'ECON 100A'),
+  p('ECON 173B', 'ECON 173A'), p('ECON 175', 'ECON 110B'),
+  p('ECON 178', 'ECON 120B'), p('ECON 180', 'ECON 100A'),
+])
 
 // ── COGS ──────────────────────────────────────────────────────────────────
+const COGS = Object.fromEntries([
+  p('COGS 1'), p('COGS 3'), p('COGS 9'), p('COGS 10'),
+  p('COGS 14A'), p('COGS 14B', 'COGS 14A'),
+  p('COGS 18'), p('COGS 17', 'COGS 14A'),
+  p('COGS 100', 'COGS 1'), p('COGS 101A', 'COGS 1'),
+  p('COGS 101B', 'COGS 1'), p('COGS 101C', 'COGS 1'),
+  p('COGS 102A', 'COGS 14B'), p('COGS 102B', 'COGS 14B'),
+  p('COGS 102C', 'COGS 14B'),
+  p('COGS 107', 'COGS 14B'), p('COGS 108', 'COGS 18'),
+  p('COGS 109', 'COGS 14B'), p('COGS 110', 'COGS 14B'),
+  p('COGS 111', 'COGS 14B'),
+  p('COGS 118A', 'COGS 18', 'MATH 18'), p('COGS 118B', 'COGS 118A'),
+  p('COGS 118C', 'COGS 118A'), p('COGS 118D', 'COGS 118A'),
+  p('COGS 119', 'COGS 18'), p('COGS 120', 'COGS 18'),
+  p('COGS 121', 'COGS 120'), p('COGS 122', 'COGS 120'),
+  p('COGS 123', 'COGS 18'), p('COGS 124', 'COGS 18'),
+  p('COGS 125', 'COGS 18'),
+  p('COGS 137', 'COGS 1'), p('COGS 138', 'COGS 108'),
+  p('COGS 150', 'COGS 14B'), p('COGS 153', 'COGS 107'),
+  p('COGS 155', 'COGS 14B'), p('COGS 160', 'COGS 1'),
+  p('COGS 170', 'COGS 14B'), p('COGS 171', 'COGS 14B'),
+  p('COGS 172', 'COGS 14B'),
+  p('COGS 180', 'COGS 14B'), p('COGS 181', 'COGS 118A'),
+  p('COGS 185', 'COGS 18'), p('COGS 187A', 'COGS 18'),
+  p('COGS 187B', 'COGS 187A'),
+  p('COGS 188', 'COGS 18'),
+])
 
-const COGS: PrereqGraph = {
-  'COGS 1':   { id: 'COGS 1',   prereqs: [], units: 4, description: 'Intro to Cognitive Science' },
-  'COGS 9':   { id: 'COGS 9',   prereqs: [], units: 4, description: 'Intro to Data Science' },
-  'COGS 10':  { id: 'COGS 10',  prereqs: [], units: 4, description: 'Cognitive Consequences of Technology' },
-  'COGS 14A': { id: 'COGS 14A', prereqs: [], units: 4, description: 'Intro to Research Methods' },
-  'COGS 14B': { id: 'COGS 14B', prereqs: ['COGS 14A'], units: 4, description: 'Intro to Statistical Analysis' },
-  'COGS 18':  { id: 'COGS 18',  prereqs: [], units: 4, description: 'Intro to Python' },
-  'COGS 100': { id: 'COGS 100', prereqs: ['COGS 1'], units: 4, description: 'Cyborgs Now & in the Future' },
-  'COGS 101A':{ id: 'COGS 101A',prereqs: ['COGS 1'], units: 4, description: 'Sensation & Perception' },
-  'COGS 101B':{ id: 'COGS 101B',prereqs: ['COGS 1'], units: 4, description: 'Learning, Memory, & Attention' },
-  'COGS 101C':{ id: 'COGS 101C',prereqs: ['COGS 1'], units: 4, description: 'Language' },
-  'COGS 107':  { id: 'COGS 107', prereqs: ['COGS 14B'], units: 4, description: 'Neuroanatomy & Physiology' },
-  'COGS 108': { id: 'COGS 108', prereqs: ['COGS 18'], units: 4, description: 'Data Science in Practice' },
-  'COGS 118A':{ id: 'COGS 118A',prereqs: ['COGS 18', 'MATH 18'], units: 4, description: 'Supervised Machine Learning Algorithms' },
-  'COGS 118B':{ id: 'COGS 118B',prereqs: ['COGS 118A'], units: 4, description: 'Intro to Machine Learning' },
-  'COGS 120': { id: 'COGS 120', prereqs: ['COGS 18'], units: 4, description: 'Interaction Design' },
-  'COGS 181': { id: 'COGS 181', prereqs: ['COGS 118A'], units: 4, description: 'Neural Networks & Deep Learning' },
-}
+// ── MAE ───────────────────────────────────────────────────────────────────
+const MAE = Object.fromEntries([
+  p('MAE 2'), p('MAE 3', 'MATH 20D', 'PHYS 2A'),
+  p('MAE 8'), p('MAE 11', 'PHYS 2A', 'MATH 20C'),
+  p('MAE 20', 'CHEM 6A'), p('MAE 21', 'MAE 20'),
+  p('MAE 30A', 'MAE 11'), p('MAE 30B', 'MAE 30A'),
+  p('MAE 101A', 'MAE 3'), p('MAE 101B', 'MAE 101A'),
+  p('MAE 101C', 'MAE 101B'),
+  p('MAE 104', 'MAE 3'), p('MAE 105', 'MAE 3'),
+  p('MAE 107', 'MATH 20D'), p('MAE 108', 'MATH 20C'),
+  p('MAE 110A', 'MAE 101A'), p('MAE 110B', 'MAE 110A'),
+  p('MAE 113', 'MAE 105'), p('MAE 119', 'MAE 101A'),
+  p('MAE 120', 'MAE 30B'), p('MAE 121', 'MAE 120'),
+  p('MAE 130A', 'MAE 3'), p('MAE 130B', 'MAE 130A'),
+  p('MAE 131A', 'MAE 130A'), p('MAE 131B', 'MAE 131A'),
+  p('MAE 140', 'MAE 3'), p('MAE 142', 'MAE 140'),
+  p('MAE 143A', 'MAE 140'), p('MAE 143B', 'MAE 143A'),
+  p('MAE 150', 'MAE 3'), p('MAE 155', 'MAE 11'),
+  p('MAE 160', 'MAE 3'), p('MAE 165', 'MAE 3'),
+  p('MAE 170', 'MAE 3'), p('MAE 171A', 'MAE 170'), p('MAE 171B', 'MAE 171A'),
+])
 
-// ── DSC (Data Science) ────────────────────────────────────────────────────
+// ── POLI ──────────────────────────────────────────────────────────────────
+const POLI = Object.fromEntries([
+  p('POLI 5'), p('POLI 10'), p('POLI 11'), p('POLI 12'), p('POLI 13'),
+  p('POLI 27'), p('POLI 28', 'POLI 27'), p('POLI 30', 'POLI 27'),
+  p('POLI 100', 'POLI 10'), p('POLI 100A', 'POLI 10'),
+  p('POLI 104A', 'POLI 10'), p('POLI 104B', 'POLI 104A'),
+  p('POLI 110', 'POLI 11'), p('POLI 112', 'POLI 11'),
+  p('POLI 113', 'POLI 11'),
+  p('POLI 120A', 'POLI 12'), p('POLI 120B', 'POLI 120A'),
+  p('POLI 120C', 'POLI 12'), p('POLI 120D', 'POLI 12'),
+  p('POLI 130', 'POLI 13'), p('POLI 131', 'POLI 13'),
+  p('POLI 140', 'POLI 12'), p('POLI 150', 'POLI 30'),
+])
 
-const DSC: PrereqGraph = {
-  'DSC 10':   { id: 'DSC 10',   prereqs: [], units: 4, description: 'Principles of Data Science' },
-  'DSC 20':   { id: 'DSC 20',   prereqs: ['DSC 10'], units: 4, description: 'Programming & Data Structures for Data Science' },
-  'DSC 30':   { id: 'DSC 30',   prereqs: ['DSC 20'], units: 4, description: 'Data Structures & Algorithms for Data Science' },
-  'DSC 40A':  { id: 'DSC 40A',  prereqs: ['DSC 10', 'MATH 20C'], units: 4, description: 'Theoretical Foundations of Data Science I' },
-  'DSC 40B':  { id: 'DSC 40B',  prereqs: ['DSC 20', 'DSC 40A'], units: 4, description: 'Theoretical Foundations of Data Science II' },
-  'DSC 80':   { id: 'DSC 80',   prereqs: ['DSC 30', 'DSC 40A'], units: 4, description: 'Practice of Data Science' },
-  'DSC 100':  { id: 'DSC 100',  prereqs: ['DSC 80', 'DSC 40B'], units: 4, description: 'Intro to Data Management' },
-  'DSC 102':  { id: 'DSC 102',  prereqs: ['DSC 100'], units: 4, description: 'Systems for Scalable Analytics' },
-  'DSC 106':  { id: 'DSC 106',  prereqs: ['DSC 80'], units: 4, description: 'Intro to Data Visualization' },
-  'DSC 140A': { id: 'DSC 140A', prereqs: ['DSC 80', 'DSC 40B', 'MATH 18'], units: 4, description: 'Probabilistic Modeling & ML' },
-  'DSC 140B': { id: 'DSC 140B', prereqs: ['DSC 140A'], units: 4, description: 'Representation Learning' },
-  'DSC 148':  { id: 'DSC 148',  prereqs: ['DSC 80', 'DSC 40B'], units: 4, description: 'Intro to Data Mining' },
-  'DSC 180A': { id: 'DSC 180A', prereqs: ['DSC 80', 'DSC 40B'], units: 4, description: 'Data Science Project I' },
-  'DSC 180B': { id: 'DSC 180B', prereqs: ['DSC 180A'], units: 4, description: 'Data Science Project II' },
-}
+// ── PSYC ──────────────────────────────────────────────────────────────────
+const PSYC = Object.fromEntries([
+  p('PSYC 1'), p('PSYC 2'), p('PSYC 3'), p('PSYC 4'),
+  p('PSYC 60', 'PSYC 1'), p('PSYC 70', 'PSYC 60'),
+  p('PSYC 100', 'PSYC 1'), p('PSYC 101', 'PSYC 2'),
+  p('PSYC 102', 'PSYC 2'), p('PSYC 104', 'PSYC 2'),
+  p('PSYC 105', 'PSYC 2'), p('PSYC 106', 'PSYC 2'),
+  p('PSYC 108', 'PSYC 2'), p('PSYC 120', 'PSYC 2'),
+  p('PSYC 133', 'PSYC 1'), p('PSYC 134', 'PSYC 1'),
+  p('PSYC 135', 'PSYC 60'), p('PSYC 138', 'PSYC 60'),
+  p('PSYC 139', 'PSYC 60'), p('PSYC 140', 'PSYC 60'),
+  p('PSYC 141', 'PSYC 60'), p('PSYC 142', 'PSYC 60'),
+  p('PSYC 143', 'PSYC 60'), p('PSYC 150', 'PSYC 60'),
+  p('PSYC 154', 'PSYC 60'), p('PSYC 155', 'PSYC 60'),
+  p('PSYC 159', 'PSYC 60'), p('PSYC 160', 'PSYC 60'),
+  p('PSYC 161', 'PSYC 60'), p('PSYC 162', 'PSYC 60'),
+  p('PSYC 163', 'PSYC 60'), p('PSYC 164', 'PSYC 60'),
+  p('PSYC 170', 'PSYC 60'), p('PSYC 171', 'PSYC 60'),
+  p('PSYC 181', 'PSYC 70'), p('PSYC 182', 'PSYC 70'),
+  p('PSYC 190', 'PSYC 70'),
+])
 
-// ── Merge all into one graph ──────────────────────────────────────────────
+// ── Merge all ─────────────────────────────────────────────────────────────
 
 export const PREREQ_GRAPH: PrereqGraph = {
-  ...CSE, ...MATH, ...ECE, ...PHYS, ...BIO, ...CHEM, ...ECON, ...COGS, ...DSC,
+  ...CSE, ...MATH, ...PHYS, ...ECE, ...DSC, ...CHEM, ...BIO, ...ECON, ...COGS, ...MAE, ...POLI, ...PSYC,
 }
-
-export const DEPARTMENTS = [
-  { id: 'CSE',  label: 'Computer Science',    courses: Object.keys(CSE) },
-  { id: 'MATH', label: 'Mathematics',          courses: Object.keys(MATH) },
-  { id: 'ECE',  label: 'Electrical & Computer Eng.', courses: Object.keys(ECE) },
-  { id: 'DSC',  label: 'Data Science',         courses: Object.keys(DSC) },
-  { id: 'PHYS', label: 'Physics',              courses: Object.keys(PHYS) },
-  { id: 'CHEM', label: 'Chemistry',            courses: Object.keys(CHEM) },
-  { id: 'BIO',  label: 'Biology',              courses: Object.keys(BIO) },
-  { id: 'ECON', label: 'Economics',             courses: Object.keys(ECON) },
-  { id: 'COGS', label: 'Cognitive Science',     courses: Object.keys(COGS) },
-]
 
 // ── Graph utility functions ──────────────────────────────────────────────
 
-/** Get all courses that directly require this course as a prerequisite */
 export function getUnlocks(courseId: string): string[] {
   return Object.values(PREREQ_GRAPH)
     .filter(n => n.prereqs.includes(courseId))
     .map(n => n.id)
 }
 
-/** Get the depth (longest chain from a root) of a course */
 export function getDepth(courseId: string, visited = new Set<string>()): number {
   if (visited.has(courseId)) return 0
   visited.add(courseId)
@@ -250,17 +336,27 @@ export function getDepth(courseId: string, visited = new Set<string>()): number 
   return 1 + Math.max(...node.prereqs.map(p => getDepth(p, visited)))
 }
 
-/** Check if all prereqs for a course are satisfied */
 export function canTake(courseId: string, completed: Set<string>): boolean {
   const node = PREREQ_GRAPH[courseId]
   if (!node) return true
   return node.prereqs.every(p => completed.has(p))
 }
 
-/** Get status of a course relative to completed set */
 export type CourseStatus = 'completed' | 'available' | 'locked'
 export function getCourseStatus(courseId: string, completed: Set<string>): CourseStatus {
   if (completed.has(courseId)) return 'completed'
   if (canTake(courseId, completed)) return 'available'
   return 'locked'
+}
+
+export function getAllDownstream(courseId: string): string[] {
+  const result = new Set<string>()
+  const queue = getUnlocks(courseId)
+  while (queue.length) {
+    const next = queue.pop()!
+    if (result.has(next)) continue
+    result.add(next)
+    queue.push(...getUnlocks(next))
+  }
+  return Array.from(result).sort()
 }
