@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   PREREQ_GRAPH,
   getCourseStatus,
@@ -8,6 +8,7 @@ import {
   type CourseStatus,
 } from '../lib/prereqChains'
 import { courseCodeToSubject, catalogUrl, socSearchUrl } from '../lib/links'
+import { useIsMobile } from '../hooks/useMediaQuery'
 
 interface PrereqChainsProps {
   completedCodes: string[]
@@ -64,6 +65,11 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
   const [deptSearch, setDeptSearch] = useState('')
   const [courseSearch, setCourseSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [mobileDeptOpen, setMobileDeptOpen] = useState(false)
+  const isMobile = useIsMobile()
+
+  // Auto-close the dept drawer when grade-school screens resize.
+  useEffect(() => { if (!isMobile) setMobileDeptOpen(false) }, [isMobile])
 
   const completed = useMemo(() => new Set(completedCodes), [completedCodes])
 
@@ -72,6 +78,7 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
     setSelectedDept(id)
     setSelectedCourse(null)
     setCourseSearch('')
+    setMobileDeptOpen(false)
     try {
       localStorage.setItem('prereqs-dept', id)
     } catch { /* ignore */ }
@@ -155,9 +162,20 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
   }, [selectedDept, handleDeptChange])
 
   return (
-    <div className="h-[calc(100vh-64px)] flex">
+    <div className="h-[calc(100vh-64px)] flex relative">
+      {/* Backdrop for mobile dept drawer */}
+      <div
+        className={`md:hidden fixed inset-0 bg-black/50 z-40 transition-opacity duration-200 ${
+          mobileDeptOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        onClick={() => setMobileDeptOpen(false)}
+        aria-hidden
+      />
       {/* ── Left sidebar: dept picker ── */}
-      <div className="w-60 shrink-0 border-r border-border bg-surface flex flex-col overflow-hidden">
+      <div className={`bg-surface border-r border-border flex flex-col overflow-hidden
+          md:static md:w-60 md:shrink-0 md:translate-x-0
+          fixed top-14 bottom-0 left-0 w-[260px] max-w-[80vw] z-50 transition-transform duration-200
+          ${mobileDeptOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="px-4 pt-5 pb-3">
           <h2 className="text-sm font-bold text-text uppercase tracking-wider">Prerequisites</h2>
           <p className="text-[11px] text-muted mt-0.5">Visualize chains across all departments</p>
@@ -226,15 +244,25 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
       {/* ── Main: graph area ── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar with stats + within-dept search + global search */}
-        <div className="px-6 py-4 border-b border-border shrink-0">
+        <div className="px-3 sm:px-6 py-3 sm:py-4 border-b border-border shrink-0">
+          {/* Mobile-only: open dept drawer */}
+          <button
+            onClick={() => setMobileDeptOpen(true)}
+            className="md:hidden mb-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border text-[12px] text-text hover:border-border2 cursor-pointer"
+          >
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+            <span className="font-semibold text-accent">{selectedDept}</span>
+          </button>
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
-              <h1 className="text-xl font-bold text-text">{selectedDept} Prerequisite Chain</h1>
-              <p className="text-[13px] text-muted mt-0.5">
-                {deptStats.total} courses · Click any course to see its prerequisites and what it unlocks
+              <h1 className="text-lg sm:text-xl font-bold text-text">{selectedDept} Prerequisite Chain</h1>
+              <p className="text-[12px] sm:text-[13px] text-muted mt-0.5">
+                {deptStats.total} courses · Tap any course to see prerequisites
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <StatPill label="Completed" value={deptStats.done} total={deptStats.total} color="green" />
               <StatPill label="Available" value={deptStats.avail} total={deptStats.total} color="accent" />
               <StatPill label="Locked" value={deptStats.locked} total={deptStats.total} color="muted" />
@@ -293,7 +321,7 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
 
         {/* Graph area */}
         <div className="flex-1 overflow-auto">
-          <div className="px-6 py-6 min-w-fit">
+          <div className="px-3 sm:px-6 py-4 sm:py-6 min-w-fit">
             {layers.length === 0 ? (
               <div className="text-[13px] text-muted">No courses in this department.</div>
             ) : (
@@ -349,9 +377,12 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
         </div>
       </div>
 
-      {/* ── Right detail panel ── */}
+      {/* ── Right detail panel ── on mobile it slides up from the bottom as a sheet */}
       {activeCourse && (
-        <div className="w-80 shrink-0 border-l border-border bg-surface flex flex-col overflow-hidden animate-fade-in">
+        <>
+        <div className="md:hidden fixed inset-0 bg-black/40 z-40 animate-fade-in" onClick={() => setSelectedCourse(null)} aria-hidden />
+        <div className="md:w-80 md:shrink-0 md:border-l md:border-t-0 md:relative md:rounded-none md:translate-y-0
+            fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface flex flex-col overflow-hidden animate-fade-in max-h-[80vh] rounded-t-2xl">
           <div className="px-5 py-5 border-b border-border">
             <div className="flex items-center justify-between">
               <StatusBadge status={getCourseStatus(activeCourse, completed)} />
@@ -456,6 +487,7 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
             </section>
           </div>
         </div>
+        </>
       )}
     </div>
   )

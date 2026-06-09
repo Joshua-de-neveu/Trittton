@@ -131,12 +131,12 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
 
   return (
     <div className="h-[calc(100vh-64px)] overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-8 py-8 space-y-6">
+      <div className="max-w-5xl mx-auto px-3 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-text">My Schedule</h2>
-            <div className="flex gap-4 mt-1 text-[11px] text-muted">
+            <div className="flex gap-x-4 gap-y-1 mt-1 text-[11px] text-muted flex-wrap">
               <span className="text-accent">{proposal.quarter}</span>
               <span><b className="text-text">{proposal.total_units}</b> units</span>
               <span><b className="text-text">{schedule.length}</b> {schedule.length === 1 ? 'course' : 'courses'}</span>
@@ -146,7 +146,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
               )}
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {/* Google Calendar sync */}
             {gcalStatus?.connected ? (
               <button

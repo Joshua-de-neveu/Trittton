@@ -18,6 +18,7 @@ interface WeeklyCalendarProps {
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+const SHORT_DAYS = ['M', 'T', 'W', 'Th', 'F']
 const START_HOUR = 8
 const END_HOUR = 21
 const HOUR_HEIGHT = 44
@@ -27,20 +28,24 @@ export function WeeklyCalendar({ blocks, untimedSections = [] }: WeeklyCalendarP
   const conflicts = detectConflicts(blocks)
   const conflictSet = new Set(conflicts.flatMap(([a, b]) => [`${a.courseCode}-${a.day}-${a.startHour}`, `${b.courseCode}-${b.day}-${b.startHour}`]))
 
+  // The grid template uses CSS variables so we can shrink the hour-label column on mobile.
+  const gridStyle = { gridTemplateColumns: 'var(--cal-gutter, 48px) repeat(5, 1fr)' } as React.CSSProperties
+
   return (
-    <div className="rounded-xl border border-border overflow-hidden bg-card">
+    <div className="rounded-xl border border-border overflow-hidden bg-card [--cal-gutter:32px] sm:[--cal-gutter:48px]">
       {/* Day headers */}
-      <div className="grid border-b border-border" style={{ gridTemplateColumns: '48px repeat(5, 1fr)' }}>
+      <div className="grid border-b border-border" style={gridStyle}>
         <div className="bg-surface p-2" />
-        {DAYS.map((d) => (
-          <div key={d} className="bg-surface px-2 py-2 text-center font-mono text-[11px] font-medium text-muted border-l border-border">
-            {d}
+        {DAYS.map((d, i) => (
+          <div key={d} className="bg-surface px-1 sm:px-2 py-2 text-center font-mono text-[10px] sm:text-[11px] font-medium text-muted border-l border-border">
+            <span className="sm:hidden">{SHORT_DAYS[i]}</span>
+            <span className="hidden sm:inline">{d}</span>
           </div>
         ))}
       </div>
 
       {/* Time grid */}
-      <div className="relative grid" style={{ gridTemplateColumns: '48px repeat(5, 1fr)' }}>
+      <div className="relative grid" style={gridStyle}>
         {/* Hour labels */}
         <div className="relative" style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}>
           {Array.from({ length: TOTAL_HOURS }, (_, i) => (

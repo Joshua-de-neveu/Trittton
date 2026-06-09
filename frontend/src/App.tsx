@@ -255,6 +255,20 @@ function AuthenticatedApp({
     })
   }, [])
 
+  // Separate state for the mobile drawer — the desktop collapse toggle doesn't make sense on phone.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [mobileDeptOpen, setMobileDeptOpen] = useState(false)
+  const closeMobileDept = useCallback(() => setMobileDeptOpen(false), [])
+  const handleHeaderHamburger = useCallback(() => {
+    // On phones: open the mobile drawer. On larger screens: toggle the desktop collapse.
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) {
+      setMobileNavOpen((prev) => !prev)
+    } else {
+      toggleSidebar()
+    }
+  }, [toggleSidebar])
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), [])
+
   // Destructive actions with undo — snapshot state, run, then offer Undo.
   const handleClearChat = useCallback(() => {
     if (messages.length === 0) { clearChat(); return }
@@ -367,8 +381,28 @@ function AuthenticatedApp({
     if (!isLoaded) return <ScrapeLoadingScreen progress={progress} error={error} onRetry={() => startScrape(term)} />
     return (
       <div className="h-[calc(100vh-64px)] flex">
-        <Sidebar departments={departments} activeDept={filters.department} totalCourses={courses.length} onDeptClick={setDepartment} />
-        <div className="flex-1 overflow-y-auto px-8 py-6">
+        <Sidebar
+          departments={departments}
+          activeDept={filters.department}
+          totalCourses={courses.length}
+          onDeptClick={setDepartment}
+          mobileOpen={mobileDeptOpen}
+          onMobileClose={closeMobileDept}
+        />
+        <div className="flex-1 overflow-y-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 min-w-0">
+          {/* Mobile-only: open the dept drawer */}
+          <button
+            onClick={() => setMobileDeptOpen(true)}
+            className="md:hidden mb-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border text-[12px] text-text hover:border-border2 cursor-pointer"
+          >
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+            Departments
+            {filters.department && filters.department !== 'ALL' && (
+              <span className="text-[11px] text-accent font-semibold">· {filters.department}</span>
+            )}
+          </button>
           <FilterBar search={filters.search} sectionType={filters.sectionType} availability={filters.availability}
             resultCount={filtered.length} onSearchChange={setSearch} onTypeChange={setSectionType} onAvailChange={setAvailability} />
           <div className="mt-4">
@@ -392,7 +426,7 @@ function AuthenticatedApp({
         onLogout={onLogout}
         userDisplayName={userDisplayName}
         userPhotoURL={userPhotoURL}
-        onToggleSidebar={toggleSidebar}
+        onToggleSidebar={handleHeaderHamburger}
         theme={theme}
         onToggleTheme={onToggleTheme}
         cloudStatus={cloudStatus}
@@ -407,6 +441,8 @@ function AuthenticatedApp({
           watchCount={seatWatch.watchCount}
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
+          mobileOpen={mobileNavOpen}
+          onMobileClose={closeMobileNav}
         />
         <main className="flex-1 min-w-0 overflow-hidden">
           <ErrorBoundary resetKey={activeView} label={activeView}>

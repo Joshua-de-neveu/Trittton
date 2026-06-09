@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 
 interface Dept {
   code: string
@@ -10,9 +10,12 @@ interface SidebarProps {
   activeDept: string
   totalCourses: number
   onDeptClick: (dept: string) => void
+  // Mobile drawer controls. When provided, the sidebar renders as an overlay drawer on small screens.
+  mobileOpen?: boolean
+  onMobileClose?: () => void
 }
 
-export function Sidebar({ departments, activeDept, totalCourses, onDeptClick }: SidebarProps) {
+export function Sidebar({ departments, activeDept, totalCourses, onDeptClick, mobileOpen = false, onMobileClose }: SidebarProps) {
   const [search, setSearch] = useState('')
 
   const filtered = useMemo(() => {
@@ -21,8 +24,33 @@ export function Sidebar({ departments, activeDept, totalCourses, onDeptClick }: 
     return departments.filter((d) => d.code.includes(q))
   }, [departments, search])
 
+  const handleDeptClick = (dept: string) => {
+    onDeptClick(dept)
+    if (onMobileClose) onMobileClose()
+  }
+
+  // Close on Escape when open as a drawer.
+  useEffect(() => {
+    if (!mobileOpen || !onMobileClose) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onMobileClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mobileOpen, onMobileClose])
+
   return (
-    <aside className="border-r border-border overflow-y-auto flex flex-col">
+    <>
+    {/* Backdrop — mobile only */}
+    <div
+      className={`md:hidden fixed inset-0 bg-black/50 z-40 transition-opacity duration-200 ${
+        mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+      }`}
+      onClick={onMobileClose}
+      aria-hidden
+    />
+    <aside className={`border-r border-border overflow-y-auto flex flex-col bg-bg
+        md:static md:translate-x-0 md:w-[200px] md:shrink-0 md:z-auto
+        fixed top-14 bottom-0 left-0 w-[260px] max-w-[80vw] z-50 transition-transform duration-200
+        ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
       {/* Header + search */}
       <div className="sticky top-0 bg-bg/95 backdrop-blur-sm z-10 px-4 pt-4 pb-2 border-b border-border/50">
         <div className="text-[11px] tracking-widest uppercase text-muted mb-2.5">
@@ -55,7 +83,7 @@ export function Sidebar({ departments, activeDept, totalCourses, onDeptClick }: 
           label="All Departments"
           count={totalCourses}
           active={activeDept === 'ALL'}
-          onClick={() => onDeptClick('ALL')}
+          onClick={() => handleDeptClick('ALL')}
         />
         {filtered.map((d) => (
           <DeptButton
@@ -64,7 +92,7 @@ export function Sidebar({ departments, activeDept, totalCourses, onDeptClick }: 
             label={d.code}
             count={d.count}
             active={activeDept === d.code}
-            onClick={() => onDeptClick(d.code)}
+            onClick={() => handleDeptClick(d.code)}
           />
         ))}
         {filtered.length === 0 && search && (
@@ -74,6 +102,7 @@ export function Sidebar({ departments, activeDept, totalCourses, onDeptClick }: 
         )}
       </div>
     </aside>
+    </>
   )
 }
 

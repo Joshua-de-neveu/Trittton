@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { ViewType } from './Header'
+import { useIsMobile } from '../hooks/useMediaQuery'
 
 interface SideNavProps {
   activeView: ViewType
@@ -9,6 +10,9 @@ interface SideNavProps {
   watchCount: number
   collapsed: boolean
   onToggleCollapse: () => void
+  // Mobile drawer state — controlled from the parent so the Header hamburger can toggle it.
+  mobileOpen?: boolean
+  onMobileClose?: () => void
 }
 
 interface NavGroup {
@@ -72,9 +76,10 @@ function loadCollapsed(): Record<string, boolean> {
   } catch { return {} }
 }
 
-export function SideNav({ activeView, onViewChange, scheduleCount, completedCount, watchCount, collapsed, onToggleCollapse }: SideNavProps) {
+export function SideNav({ activeView, onViewChange, scheduleCount, completedCount, watchCount, collapsed, onToggleCollapse, mobileOpen = false, onMobileClose }: SideNavProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(loadCollapsed)
   const groups = GROUPS(scheduleCount, completedCount, watchCount)
+  const isMobile = useIsMobile()
 
   const toggleGroup = (label: string) => {
     const next = { ...collapsedGroups, [label]: !collapsedGroups[label] }
@@ -82,6 +87,93 @@ export function SideNav({ activeView, onViewChange, scheduleCount, completedCoun
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   }
 
+  // Selecting a view on mobile closes the drawer.
+  const handleViewChange = (view: ViewType) => {
+    onViewChange(view)
+    if (isMobile && onMobileClose) onMobileClose()
+  }
+
+  // Close on Escape when drawer is open on mobile.
+  useEffect(() => {
+    if (!isMobile || !mobileOpen || !onMobileClose) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onMobileClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isMobile, mobileOpen, onMobileClose])
+
+  // ── Mobile: full-screen drawer with backdrop ──
+  if (isMobile) {
+    return (
+      <>
+        {/* Backdrop */}
+        <div
+          className={`fixed inset-0 bg-black/50 z-40 transition-opacity duration-200 ${
+            mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
+          onClick={onMobileClose}
+          aria-hidden
+        />
+        {/* Drawer */}
+        <nav
+          className={`fixed top-0 left-0 bottom-0 w-[260px] max-w-[80vw] z-50 bg-surface border-r border-border flex flex-col overflow-y-auto transition-transform duration-200 ${
+            mobileOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+          aria-hidden={!mobileOpen}
+        >
+          <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Navigation</span>
+            {onMobileClose && (
+              <button onClick={onMobileClose} className="p-1 rounded-md text-muted hover:text-text hover:bg-card cursor-pointer">
+                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {groups.map((group) => {
+            const isCollapsed = collapsedGroups[group.label]
+            return (
+              <div key={group.label} className="mb-0.5">
+                <button onClick={() => toggleGroup(group.label)} className="w-full flex items-center justify-between px-4 py-1.5 cursor-pointer group">
+                  <span className="text-[11px] font-medium text-dim uppercase tracking-wider group-hover:text-muted">{group.label}</span>
+                  <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className={`text-dim transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </button>
+                <div className={`overflow-hidden transition-all duration-200 ${isCollapsed ? 'max-h-0' : 'max-h-96'}`}>
+                  <div className="px-2 pb-1.5 space-y-0.5">
+                    {group.items.map((item) => {
+                      const isActive = activeView === item.view
+                      return (
+                        <button
+                          key={item.view}
+                          onClick={() => handleViewChange(item.view)}
+                          className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-left cursor-pointer transition-all relative ${
+                            isActive ? 'bg-accent/10 text-accent' : 'text-muted hover:bg-card hover:text-text'
+                          }`}
+                        >
+                          <span className="w-5 h-5 flex items-center justify-center shrink-0">{item.icon}</span>
+                          <span className={`text-[14px] flex-1 ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>
+                          {item.badge !== undefined && item.badge > 0 && (
+                            <span className={`min-w-[20px] h-5 text-[11px] font-semibold rounded-full flex items-center justify-center px-1.5 ${isActive ? 'bg-accent/20 text-accent' : 'bg-card text-muted'}`}>
+                              {item.badge}
+                            </span>
+                          )}
+                          {isActive && <span className="w-[3px] h-4 rounded-full bg-accent absolute left-0" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </nav>
+      </>
+    )
+  }
+
+  // ── Desktop: existing inline behavior ──
   if (collapsed) {
     return (
       <nav className="w-[56px] border-r border-border bg-surface flex flex-col items-center py-3 gap-1 shrink-0">

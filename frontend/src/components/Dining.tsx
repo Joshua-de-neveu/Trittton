@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useIsMobile } from '../hooks/useMediaQuery'
 
 // ── Types ──
 
@@ -137,6 +138,9 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
   const [selectedMeal, setSelectedMeal] = useState<MealPeriod>(getCurrentMealPeriod)
   const [selectedStation, setSelectedStation] = useState('')
   const [search, setSearch] = useState('')
+  const [mobileHallsOpen, setMobileHallsOpen] = useState(false)
+  const isMobile = useIsMobile()
+  useEffect(() => { if (!isMobile) setMobileHallsOpen(false) }, [isMobile])
 
   const fetchMenus = (refresh = false) => {
     if (refresh) setRefreshing(true)
@@ -210,9 +214,20 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
   }
 
   return (
-    <div className="h-[calc(100vh-64px)] flex">
+    <div className="h-[calc(100vh-64px)] flex relative">
+      {/* Backdrop for mobile halls drawer */}
+      <div
+        className={`md:hidden fixed inset-0 bg-black/50 z-40 transition-opacity duration-200 ${
+          mobileHallsOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        onClick={() => setMobileHallsOpen(false)}
+        aria-hidden
+      />
       {/* ═══ LEFT — Dining Hall List ═══ */}
-      <div className="w-72 shrink-0 border-r border-border bg-surface flex flex-col overflow-hidden">
+      <div className={`border-r border-border bg-surface flex flex-col overflow-hidden
+          md:static md:w-72 md:shrink-0 md:translate-x-0
+          fixed top-14 bottom-0 left-0 w-[280px] max-w-[80vw] z-50 transition-transform duration-200
+          ${mobileHallsOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-text">Dining Halls</h2>
@@ -240,7 +255,7 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
             const isActive = selectedHallId === id
             const status = getOpenStatus(h.info.hours)
             return (
-              <button key={id} onClick={() => { setSelectedHallId(id); setSelectedStation(''); setSearch('') }}
+              <button key={id} onClick={() => { setSelectedHallId(id); setSelectedStation(''); setSearch(''); setMobileHallsOpen(false) }}
                 className={`w-full text-left px-3 py-3 rounded-xl cursor-pointer transition-all mb-1 ${
                   isActive ? 'bg-accent/10 border border-accent/20' : 'hover:bg-card border border-transparent'
                 }`}>
@@ -271,10 +286,20 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
         ) : (
           <>
             {/* ── Restaurant Info Card ── */}
-            <div className="px-6 pt-5 pb-4 border-b border-border shrink-0">
+            <div className="px-3 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-border shrink-0">
+              {/* Mobile-only: open halls drawer */}
+              <button
+                onClick={() => setMobileHallsOpen(true)}
+                className="md:hidden mb-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border text-[12px] text-text hover:border-border2 cursor-pointer"
+              >
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                </svg>
+                Dining Halls
+              </button>
               {/* Name + Status */}
-              <div className="flex items-center gap-3 mb-2">
-                <h1 className="text-2xl font-bold text-text">{info.name}</h1>
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                <h1 className="text-xl sm:text-2xl font-bold text-text">{info.name}</h1>
                 {hallStatus?.open ? (
                   <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-green/10 text-green border border-green/20">Open</span>
                 ) : (
@@ -317,7 +342,7 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
             </div>
 
             {/* ── Meal Tabs ── */}
-            <div className="px-6 py-3 border-b border-border flex items-center gap-3 shrink-0">
+            <div className="px-3 sm:px-6 py-3 border-b border-border flex items-center gap-2 sm:gap-3 shrink-0 flex-wrap">
               <div className="flex gap-1 bg-bg rounded-lg p-0.5">
                 {(['Breakfast', 'Lunch', 'Dinner'] as MealPeriod[]).map(meal => {
                   const count = (hall.meals[meal] || []).length
@@ -358,7 +383,7 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
 
             {/* ── Station Filters ── */}
             {stations.length > 1 && (
-              <div className="px-6 py-2.5 border-b border-border flex flex-wrap gap-1.5 shrink-0">
+              <div className="px-3 sm:px-6 py-2.5 border-b border-border flex flex-wrap gap-1.5 shrink-0">
                 <button onClick={() => setSelectedStation('')}
                   className={`px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer transition-all ${
                     !selectedStation ? 'bg-accent text-white' : 'bg-card border border-border text-muted hover:text-text'
@@ -421,7 +446,7 @@ export function Dining({ model: _model, onModelChange: _onModelChange, geminiKey
               ) : filteredItems.length === 0 ? (
                 <div className="text-center py-16 text-muted text-sm">No items match "{search}"</div>
               ) : (
-                <div className="px-6 py-4">
+                <div className="px-3 sm:px-6 py-4">
                   {Object.entries(groupedByStation).map(([station, items]) => (
                     <div key={station} className="mb-8">
                       {/* Station header */}
