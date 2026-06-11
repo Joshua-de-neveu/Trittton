@@ -192,18 +192,6 @@ Trittton/
 
 ---
 
-## Built With AI
-
-This entire application — **5,600+ lines of TypeScript/React, Python, and test code** — was built collaboratively with [Claude Code](https://claude.ai/code) (Anthropic's Claude Opus 4.6) in a single extended session.
-
-**What the human did:** Vision, requirements, UX feedback, testing, iteration direction
-
-**What AI did:** Architecture, all code generation, component design, API integration, test writing, debugging
-
-This is a real-world example of AI-augmented development — not a toy demo, but a functional tool that a UCSD student can use today to plan their courses, check professor ratings, and track graduation progress.
-
----
-
 ## About GAMECHANGERSai
 
 <a href="https://gamechangersai.org"><img src="https://img.shields.io/badge/GAMECHANGERSai-501(c)(3)-blue?style=for-the-badge" alt="GAMECHANGERSai"></a>
