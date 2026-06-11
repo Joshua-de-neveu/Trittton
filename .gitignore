@@ -31,4 +31,5 @@ frontend/playwright-report/
 # Secrets (never commit)
 gcal_credentials.json
 gcal_token.json
+gcal_tokens/
 .env

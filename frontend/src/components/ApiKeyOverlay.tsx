@@ -1,10 +1,45 @@
 import { useState } from 'react'
 
+export type ApiKeyKind = 'gemini' | 'anthropic'
+
 interface ApiKeyOverlayProps {
+  kind: ApiKeyKind
   onSubmit: (key: string) => void
+  onCancel?: () => void
 }
 
-export function ApiKeyOverlay({ onSubmit }: ApiKeyOverlayProps) {
+interface ProviderInfo {
+  title: string
+  description: string
+  keyLabel: string
+  placeholder: string
+  signupUrl: string
+  validates: (key: string) => string | null  // null = valid, string = error
+}
+
+const PROVIDERS: Record<ApiKeyKind, ProviderInfo> = {
+  gemini: {
+    title: 'Set Up Your Gemini API Key',
+    description:
+      "To use Gemini, you need a free Google Gemini API key. Your key is stored locally in this browser only and is never saved on our servers.",
+    keyLabel: 'Gemini API Key',
+    placeholder: 'AIza...',
+    signupUrl: 'https://aistudio.google.com/apikey',
+    validates: (k) => (k.startsWith('AIza') ? null : "That doesn’t look like a Gemini API key (should start with “AIza”)."),
+  },
+  anthropic: {
+    title: 'Set Up Your Anthropic API Key',
+    description:
+      "To use Claude (Sonnet/Opus), you need your own Anthropic API key so requests are billed to your account. Your key is stored locally in this browser only and is never saved on our servers.",
+    keyLabel: 'Anthropic API Key',
+    placeholder: 'sk-ant-...',
+    signupUrl: 'https://console.anthropic.com/settings/keys',
+    validates: (k) => (k.startsWith('sk-ant-') ? null : "That doesn’t look like an Anthropic API key (should start with “sk-ant-”)."),
+  },
+}
+
+export function ApiKeyOverlay({ kind, onSubmit, onCancel }: ApiKeyOverlayProps) {
+  const provider = PROVIDERS[kind]
   const [key, setKey] = useState('')
   const [error, setError] = useState('')
 
@@ -15,8 +50,9 @@ export function ApiKeyOverlay({ onSubmit }: ApiKeyOverlayProps) {
       setError('Please enter your API key')
       return
     }
-    if (!trimmed.startsWith('AIza')) {
-      setError('That doesn\u2019t look like a valid Gemini API key')
+    const validationErr = provider.validates(trimmed)
+    if (validationErr) {
+      setError(validationErr)
       return
     }
     onSubmit(trimmed)
@@ -29,7 +65,6 @@ export function ApiKeyOverlay({ onSubmit }: ApiKeyOverlayProps) {
           onSubmit={handleSubmit}
           className="rounded-2xl border border-border bg-card p-8 space-y-5 shadow-2xl"
         >
-          {/* Icon */}
           <div className="flex justify-center">
             <div className="w-16 h-16 rounded-2xl bg-gold/12 flex items-center justify-center">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#f5c842" strokeWidth="1.5">
@@ -39,15 +74,12 @@ export function ApiKeyOverlay({ onSubmit }: ApiKeyOverlayProps) {
           </div>
 
           <div className="text-center">
-            <h2 className="text-xl font-semibold text-text">Set Up Your Gemini API Key</h2>
-            <p className="text-[13px] text-muted mt-2 leading-relaxed">
-              To use AI features, you need a free Google Gemini API key.
-              Your key is stored locally in this browser and never sent to our servers.
-            </p>
+            <h2 className="text-xl font-semibold text-text">{provider.title}</h2>
+            <p className="text-[13px] text-muted mt-2 leading-relaxed">{provider.description}</p>
           </div>
 
           <a
-            href="https://aistudio.google.com/apikey"
+            href={provider.signupUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 w-full py-3 rounded-xl
@@ -57,18 +89,18 @@ export function ApiKeyOverlay({ onSubmit }: ApiKeyOverlayProps) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
             </svg>
-            Get your free key here
+            Get your key
           </a>
 
           <div>
             <label className="block font-mono text-[10px] text-muted uppercase tracking-wider mb-1.5">
-              Gemini API Key
+              {provider.keyLabel}
             </label>
             <input
               type="password"
               value={key}
               onChange={(e) => { setKey(e.target.value); setError('') }}
-              placeholder="AIza..."
+              placeholder={provider.placeholder}
               autoFocus
               className="w-full bg-surface border border-border rounded-xl px-4 py-3
                 text-[14px] text-text font-mono outline-none
@@ -82,19 +114,32 @@ export function ApiKeyOverlay({ onSubmit }: ApiKeyOverlayProps) {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!key.trim()}
-            className="w-full py-3 rounded-xl font-mono text-[13px] font-semibold
-              bg-gold text-bg hover:opacity-90
-              disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer
-              transition-all"
-          >
-            Save Key &amp; Continue
-          </button>
+          <div className="flex gap-2">
+            {onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-4 py-3 rounded-xl font-mono text-[13px] font-semibold
+                  bg-card border border-border text-muted
+                  hover:text-text hover:border-border2 cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={!key.trim()}
+              className="flex-1 py-3 rounded-xl font-mono text-[13px] font-semibold
+                bg-gold text-bg hover:opacity-90
+                disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer
+                transition-all"
+            >
+              Save Key &amp; Continue
+            </button>
+          </div>
 
           <p className="text-[10px] text-dim font-mono text-center">
-            Stored in localStorage &middot; Never leaves your browser
+            Stored in localStorage &middot; Never sent to Trittton servers
           </p>
         </form>
       </div>

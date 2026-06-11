@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -176,12 +176,33 @@ def get_terms():
 # ── Course Data ──────────────────────────────────────────────────────────────
 
 @app.get("/api/courses")
-def get_courses():
+def get_courses(request: Request):
+    """Return the latest scraped course catalog.
+
+    The catalog is ~1.5 MB and rarely changes during a session. We tag every response
+    with an ETag based on the file's mtime + size so the browser can short-circuit
+    subsequent fetches with a 304 once the data is cached in IndexedDB.
+    """
     if not OUTPUT.exists():
         return JSONResponse({"error": "No course data found. Run the scraper first."}, status_code=404)
+
+    stat = OUTPUT.stat()
+    etag = f'"{int(stat.st_mtime)}-{stat.st_size}"'
+    if_none_match = request.headers.get("if-none-match", "").strip()
+    if if_none_match and if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=300, must-revalidate"})
+
     with open(OUTPUT, "r") as f:
         data = json.load(f)
-    return data
+    return JSONResponse(
+        content=data,
+        headers={
+            "ETag": etag,
+            # 5-minute browser cache, but always revalidate against the ETag so a fresh
+            # scrape is picked up promptly.
+            "Cache-Control": "public, max-age=300, must-revalidate",
+        },
+    )
 
 
 # ── Scraping ─────────────────────────────────────────────────────────────────
@@ -487,6 +508,11 @@ class ChatRequest(BaseModel):
     term: str = "SP26"
     completed_courses: str = ""
     gemini_api_key: Optional[str] = None
+    # Per-user Anthropic API key. When provided, /api/chat uses the Anthropic
+    # API path so each user is billed against their own quota. If absent, the
+    # server falls back to the local Claude CLI (deployment-owner mode only).
+    anthropic_api_key: Optional[str] = None
+    uid: Optional[str] = None
 
 TERM_LABELS = {
     "WI26": "Winter 2026", "SP26": "Spring 2026", "S126": "Summer I 2026",
@@ -702,6 +728,122 @@ def _stream_gemini(system_prompt: str, conversation: str, client_api_key: str | 
         yield f"data: {json.dumps({'done': True})}\n\n"
 
 
+# Map of user-facing model names to Anthropic API model IDs. Kept here so both the
+# /api/chat and AutoScheduler paths agree on which model to call.
+_ANTHROPIC_MODEL_IDS = {
+    "sonnet": "claude-sonnet-4-5",
+    "opus":   "claude-opus-4-5",
+    "haiku":  "claude-haiku-4-5",
+}
+
+
+def _stream_anthropic(system_prompt: str, conversation: str, model_name: str, api_key: str):
+    """Stream a chat response from the Anthropic API using the requesting user's API key.
+
+    Yields the same SSE event shape as _stream_claude / _stream_gemini so the frontend
+    doesn't need to know which backend powered the request.
+    """
+    try:
+        import anthropic as _anthropic
+    except Exception:
+        yield f"data: {json.dumps({'error': 'anthropic SDK not installed on server'})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
+        return
+
+    if not api_key or not api_key.strip():
+        yield f"data: {json.dumps({'error': 'Missing Anthropic API key'})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
+        return
+
+    model_id = _ANTHROPIC_MODEL_IDS.get(model_name, _ANTHROPIC_MODEL_IDS["sonnet"])
+
+    # The frontend has been sending alternating user/assistant lines as a flat string in
+    # `conversation`. The Anthropic API takes a structured messages list, so reparse.
+    msgs: list[dict] = []
+    current_role: str | None = None
+    current_lines: list[str] = []
+
+    def flush():
+        nonlocal current_role, current_lines
+        if current_role and current_lines:
+            text = "\n".join(current_lines).strip()
+            if text:
+                msgs.append({"role": current_role, "content": text})
+        current_role = None
+        current_lines = []
+
+    for line in conversation.splitlines():
+        if line.startswith("User:"):
+            flush()
+            current_role = "user"
+            tail = line[len("User:"):].lstrip()
+            if tail:
+                current_lines.append(tail)
+        elif line.startswith("Assistant:"):
+            flush()
+            current_role = "assistant"
+            tail = line[len("Assistant:"):].lstrip()
+            if tail:
+                current_lines.append(tail)
+        else:
+            current_lines.append(line)
+    flush()
+
+    if not msgs or msgs[-1]["role"] != "user":
+        # Defensive: every Anthropic call must end with a user turn.
+        msgs.append({"role": "user", "content": "(continue)"})
+
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        yield f"data: {json.dumps({'thinking': True, 'phase': 'Analyzing course catalog...'})}\n\n"
+        started = False
+        with client.messages.stream(
+            model=model_id,
+            system=system_prompt,
+            max_tokens=8192,
+            messages=msgs,
+        ) as stream:
+            for chunk in stream.text_stream:
+                if not chunk:
+                    continue
+                if not started:
+                    started = True
+                    yield f"data: {json.dumps({'thinking': False})}\n\n"
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+        if not started:
+            yield f"data: {json.dumps({'thinking': False})}\n\n"
+    except Exception as e:
+        # Surface common cases (auth, quota) clearly so users can fix their key.
+        msg = str(e)
+        if "authentication_error" in msg or "invalid x-api-key" in msg:
+            msg = "Invalid Anthropic API key — check that it begins with 'sk-ant-' and is active."
+        elif "rate_limit" in msg or "credit balance" in msg.lower():
+            msg = "Anthropic API rate limit or quota hit — try again in a minute, or check your usage."
+        logger.error("Anthropic API error: %s", e)
+        yield f"data: {json.dumps({'error': msg})}\n\n"
+    finally:
+        yield f"data: {json.dumps({'done': True})}\n\n"
+
+
+# Whether the server-owner's local Claude CLI is usable as a fallback when no
+# anthropic_api_key is supplied. Off by default in production. Set CLAUDE_USE_CLI=1
+# for local dev to skip needing an API key.
+_CLAUDE_USE_CLI = _os.environ.get("CLAUDE_USE_CLI", "0") == "1"
+
+
+def _stream_claude_dispatch(system_prompt: str, conversation: str, model_name: str, anthropic_api_key: str | None):
+    """Pick the Anthropic API path when a per-user key is provided; otherwise fall back."""
+    if anthropic_api_key and anthropic_api_key.strip():
+        yield from _stream_anthropic(system_prompt, conversation, model_name, anthropic_api_key)
+        return
+    if _CLAUDE_USE_CLI:
+        yield from _stream_claude(system_prompt, conversation, model_name)
+        return
+    # Neither a key nor the CLI fallback — make the requirement obvious.
+    yield f"data: {json.dumps({'error': 'Anthropic API key required. Set it once in the app to use Claude (Sonnet/Opus).'})}\n\n"
+    yield f"data: {json.dumps({'done': True})}\n\n"
+
+
 def _stream_claude(system_prompt: str, conversation: str, model_name: str):
     """Stream a response from the Claude CLI."""
     import os
@@ -816,7 +958,10 @@ def chat(req: ChatRequest):
     if req.model == "gemini":
         return StreamingResponse(_stream_gemini(system_prompt, conversation, req.gemini_api_key), media_type="text/event-stream")
 
-    return StreamingResponse(_stream_claude(system_prompt, conversation, req.model), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_claude_dispatch(system_prompt, conversation, req.model, req.anthropic_api_key),
+        media_type="text/event-stream",
+    )
 
 
 # ── RateMyProfessor Proxy ─────────────────────────────────────────────────────
@@ -992,10 +1137,17 @@ def get_rmp_rating(instructor: str = Query(...)):
 
 
 # ── Seat Watch ────────────────────────────────────────────────────────────────
+#
+# State is now per-user: each Firebase uid gets its own watch dict and alert queue.
+# The background polling thread still fetches each unique (subject, term) pair just ONCE
+# per cycle and fans the result out to every uid watching that section, so we don't
+# multiply UCSD's load with the user count.
 
-_seat_watches: dict = {}  # key: section_id -> {course_code, section, term, last_available, watchers: int}
+# Maps uid -> {section_id -> {course_code, section, term, last_available, watchers: int}}
+_seat_watches_by_user: dict = {}
+# Maps uid -> list of recent alerts
+_seat_alerts_by_user: dict = {}
 _seat_watch_lock = threading.Lock()
-_seat_alerts: list = []  # [{section_id, course_code, section, available, timestamp}]
 _seat_watch_thread = None
 
 
@@ -1004,50 +1156,74 @@ class SeatWatchRequest(BaseModel):
     course_code: str
     section: str
     term: str = "SP26"
+    # Owning user. Optional for backwards compatibility — if missing we fall back to a
+    # shared "anonymous" bucket so older clients keep working but don't leak across users.
+    uid: str | None = None
+
+
+def _watch_uid_or_anon(uid: str | None) -> str:
+    return uid or "_anon_"
+
+
+def _ensure_user_buckets(uid: str) -> None:
+    if uid not in _seat_watches_by_user:
+        _seat_watches_by_user[uid] = {}
+    if uid not in _seat_alerts_by_user:
+        _seat_alerts_by_user[uid] = []
 
 
 @app.post("/api/watch/add")
 def add_seat_watch(req: SeatWatchRequest):
-    """Add a section to the seat watch list."""
+    """Add a section to the requesting user's seat watch list."""
+    uid = _watch_uid_or_anon(req.uid)
     with _seat_watch_lock:
-        if req.section_id in _seat_watches:
-            _seat_watches[req.section_id]["watchers"] += 1
+        _ensure_user_buckets(uid)
+        user_watches = _seat_watches_by_user[uid]
+        if req.section_id in user_watches:
+            user_watches[req.section_id]["watchers"] += 1
         else:
-            _seat_watches[req.section_id] = {
+            user_watches[req.section_id] = {
                 "course_code": req.course_code,
                 "section": req.section,
                 "term": req.term,
                 "last_available": 0,
                 "watchers": 1,
             }
+        total = len(user_watches)
     _ensure_watch_thread()
-    return {"watching": True, "total_watched": len(_seat_watches)}
+    return {"watching": True, "total_watched": total}
 
 
 @app.post("/api/watch/remove")
 def remove_seat_watch(req: SeatWatchRequest):
-    """Remove a section from the seat watch list."""
+    """Remove a section from the requesting user's seat watch list."""
+    uid = _watch_uid_or_anon(req.uid)
     with _seat_watch_lock:
-        if req.section_id in _seat_watches:
-            _seat_watches[req.section_id]["watchers"] -= 1
-            if _seat_watches[req.section_id]["watchers"] <= 0:
-                del _seat_watches[req.section_id]
-    return {"watching": False, "total_watched": len(_seat_watches)}
+        user_watches = _seat_watches_by_user.get(uid, {})
+        if req.section_id in user_watches:
+            user_watches[req.section_id]["watchers"] -= 1
+            if user_watches[req.section_id]["watchers"] <= 0:
+                del user_watches[req.section_id]
+        total = len(user_watches)
+    return {"watching": False, "total_watched": total}
 
 
 @app.get("/api/watch/list")
-def list_seat_watches():
-    """List all watched sections and their current status."""
+def list_seat_watches(uid: str | None = None):
+    """List the requesting user's watches and their current status."""
+    bucket_uid = _watch_uid_or_anon(uid)
     with _seat_watch_lock:
-        return {"watches": dict(_seat_watches)}
+        return {"watches": dict(_seat_watches_by_user.get(bucket_uid, {}))}
 
 
 @app.get("/api/watch/alerts")
-def get_seat_alerts():
-    """Get recent seat availability alerts (clears after reading)."""
+def get_seat_alerts(uid: str | None = None):
+    """Get the requesting user's recent seat availability alerts (clears after reading)."""
+    bucket_uid = _watch_uid_or_anon(uid)
     with _seat_watch_lock:
-        alerts = list(_seat_alerts)
-        _seat_alerts.clear()
+        alerts = list(_seat_alerts_by_user.get(bucket_uid, []))
+        if bucket_uid in _seat_alerts_by_user:
+            _seat_alerts_by_user[bucket_uid] = []
     return {"alerts": alerts}
 
 
@@ -1062,63 +1238,80 @@ def _ensure_watch_thread():
 
 
 def _seat_watch_loop():
-    """Background thread that polls watched sections for seat changes."""
+    """Background thread that polls watched sections for seat changes.
+
+    We collapse all users' watches by (subject, term) so we only hit UCSD once per
+    unique subject/term per cycle, then fan the result out to every uid that's watching
+    a matching section_id.
+    """
     import requests as req_lib
     from app import fetch_subject, parse_html
 
     while True:
         with _seat_watch_lock:
-            watches = dict(_seat_watches)
+            # Snapshot per-user watches
+            snapshot = {uid: dict(w) for uid, w in _seat_watches_by_user.items()}
 
-        if not watches:
+        # Build the set of unique (subject, term) pairs to fetch, plus a reverse index:
+        # (section_id, term) -> list of (uid, info) for fan-out.
+        subj_term: dict = {}            # (subject, term) -> list of section_ids we care about
+        section_owners: dict = {}        # (section_id, term) -> [(uid, info_ref), ...]
+        total_active = 0
+        for uid, user_watches in snapshot.items():
+            for sid, info in user_watches.items():
+                total_active += 1
+                code = info.get("course_code", "")
+                subj = code.split()[0] if " " in code else code
+                term = info.get("term", "SP26")
+                key = (subj, term)
+                subj_term.setdefault(key, set()).add(sid)
+                section_owners.setdefault((sid, term), []).append((uid, info))
+
+        if total_active == 0:
             time.sleep(10)
             continue
 
-        # Group by subject for efficient fetching
-        subjects: dict = {}
-        for sid, info in watches.items():
-            subj = info["course_code"].split()[0] if " " in info["course_code"] else info["course_code"]
-            if subj not in subjects:
-                subjects[subj] = []
-            subjects[subj].append((sid, info))
-
         session = req_lib.Session()
-        for subj, section_list in subjects.items():
-            term = section_list[0][1]["term"]
+        for (subj, term), _section_ids in subj_term.items():
             try:
                 html = fetch_subject(session, term, subj)
                 if not html:
                     continue
                 courses = parse_html(html, subj)
 
-                # Build section_id -> available lookup
                 avail_map: dict = {}
                 for course in courses:
                     for sec in course["sections"]:
                         if sec["section_id"]:
                             avail_map[sec["section_id"]] = int(sec["available"]) if sec["available"].isdigit() else 0
 
-                # Check each watched section
-                for sid, info in section_list:
+                # For every (section, term) we care about, update each owning user's
+                # last_available and emit an alert into that user's queue when seats
+                # transition 0 -> >0.
+                for (sid, t_), owners in section_owners.items():
+                    if t_ != term:
+                        continue
                     new_avail = avail_map.get(sid, 0)
-                    old_avail = info.get("last_available", 0)
-
-                    with _seat_watch_lock:
-                        if sid in _seat_watches:
-                            _seat_watches[sid]["last_available"] = new_avail
-
-                    # Alert if seats just opened
-                    if new_avail > 0 and old_avail == 0:
-                        alert = {
-                            "section_id": sid,
-                            "course_code": info["course_code"],
-                            "section": info["section"],
-                            "available": new_avail,
-                            "timestamp": time.time(),
-                        }
+                    for uid, info in owners:
+                        old_avail = info.get("last_available", 0)
                         with _seat_watch_lock:
-                            _seat_alerts.append(alert)
-                        logger.info("SEAT ALERT: %s %s now has %d seats!", info["course_code"], info["section"], new_avail)
+                            user_watches = _seat_watches_by_user.get(uid, {})
+                            if sid in user_watches:
+                                user_watches[sid]["last_available"] = new_avail
+                        if new_avail > 0 and old_avail == 0:
+                            alert = {
+                                "section_id": sid,
+                                "course_code": info["course_code"],
+                                "section": info["section"],
+                                "available": new_avail,
+                                "timestamp": time.time(),
+                            }
+                            with _seat_watch_lock:
+                                _seat_alerts_by_user.setdefault(uid, []).append(alert)
+                            logger.info(
+                                "SEAT ALERT for uid=%s: %s %s now has %d seats!",
+                                uid, info["course_code"], info["section"], new_avail,
+                            )
 
             except Exception as e:
                 logger.error("Seat watch error for %s: %s", subj, e)
@@ -1412,14 +1605,16 @@ class ScheduleRequest(BaseModel):
     end_date: str
     model: str = "gemini"
     gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    uid: Optional[str] = None
 
 
 EFFORT_HOURS = {1: 1.2, 2: 2.4, 3: 4.2, 4: 6.0, 5: 9.0}
 
 
-def _fetch_gcal_events(start_date: str, end_date: str) -> list:
-    """Fetch events from ALL Google Calendars."""
-    service = _get_gcal_service()
+def _fetch_gcal_events(start_date: str, end_date: str, uid: str | None = None) -> list:
+    """Fetch events from ALL Google Calendars belonging to the requesting user."""
+    service = _get_gcal_service(uid)
     if not service:
         return []
 
@@ -1467,10 +1662,10 @@ def _fetch_gcal_events(start_date: str, end_date: str) -> list:
 
 
 @app.get("/api/scheduler/events")
-def get_calendar_events(start: str = Query(...), end: str = Query(...)):
-    """Fetch all Google Calendar events for the date range."""
-    events = _fetch_gcal_events(start, end)
-    return {"events": events, "connected": len(events) > 0 or _get_gcal_service() is not None}
+def get_calendar_events(start: str = Query(...), end: str = Query(...), uid: str = Query(default="")):
+    """Fetch the requesting user's Google Calendar events for the date range."""
+    events = _fetch_gcal_events(start, end, uid)
+    return {"events": events, "connected": len(events) > 0 or _get_gcal_service(uid) is not None}
 
 
 @app.post("/api/scheduler/plan")
@@ -1478,8 +1673,8 @@ def auto_schedule(req: ScheduleRequest):
     """Use AI to generate optimal study blocks around existing calendar events."""
     from datetime import datetime, timedelta
 
-    # Fetch existing calendar events
-    busy_blocks = _fetch_gcal_events(req.start_date, req.end_date)
+    # Fetch existing calendar events (scoped to the requesting user)
+    busy_blocks = _fetch_gcal_events(req.start_date, req.end_date, req.uid)
 
     # Build a summary of busy times for AI
     busy_summary = ""
@@ -1564,20 +1759,35 @@ Use real dates and times. Be specific. Output ONLY the JSON block."""
         else:
             ai_text = ""
     else:
-        # Use Claude CLI
-        try:
-            model_flag = "sonnet" if req.model == "sonnet" else "opus"
-            proc = subprocess.Popen(
-                [CLAUDE_BIN, "-p", "--model", model_flag, "--output-format", "text"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-            proc.stdin.write(ai_prompt.encode("utf-8"))
-            proc.stdin.close()
-            ai_text = proc.stdout.read().decode("utf-8", errors="replace")
-            proc.wait()
-        except Exception as e:
-            logger.error("Claude scheduler error: %s", e)
-            ai_text = ""
+        # Use Anthropic API with the user's key when provided, else fall back to CLI
+        # only if the deployment owner explicitly opted in (CLAUDE_USE_CLI=1).
+        ai_text = ""
+        if req.anthropic_api_key and req.anthropic_api_key.strip():
+            try:
+                import anthropic as _anthropic
+                client = _anthropic.Anthropic(api_key=req.anthropic_api_key)
+                model_id = _ANTHROPIC_MODEL_IDS.get(req.model, _ANTHROPIC_MODEL_IDS["sonnet"])
+                resp = client.messages.create(
+                    model=model_id,
+                    max_tokens=4096,
+                    messages=[{"role": "user", "content": ai_prompt}],
+                )
+                ai_text = "".join(block.text for block in resp.content if hasattr(block, "text"))
+            except Exception as e:
+                logger.error("Anthropic scheduler error: %s", e)
+        elif _CLAUDE_USE_CLI:
+            try:
+                model_flag = "sonnet" if req.model == "sonnet" else "opus"
+                proc = subprocess.Popen(
+                    [CLAUDE_BIN, "-p", "--model", model_flag, "--output-format", "text"],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                proc.stdin.write(ai_prompt.encode("utf-8"))
+                proc.stdin.close()
+                ai_text = proc.stdout.read().decode("utf-8", errors="replace")
+                proc.wait()
+            except Exception as e:
+                logger.error("Claude scheduler error: %s", e)
 
     # Parse AI response
     study_blocks = []
@@ -1648,6 +1858,8 @@ class SchedulerChatRequest(BaseModel):
     leisure: list = []
     model: str = "gemini"
     gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    uid: Optional[str] = None
 
 
 SCHEDULER_CHAT_SYSTEM = """You are a smart schedule assistant for a UCSD student. You help them adjust their weekly plan by conversation.
@@ -1702,17 +1914,21 @@ def scheduler_chat(req: SchedulerChatRequest):
 
     if req.model == "gemini":
         return StreamingResponse(_stream_gemini(system, conversation, req.gemini_api_key), media_type="text/event-stream")
-    return StreamingResponse(_stream_claude(system, conversation, req.model), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_claude_dispatch(system, conversation, req.model, req.anthropic_api_key),
+        media_type="text/event-stream",
+    )
 
 
 class PushBlocksRequest(BaseModel):
     blocks: list
+    uid: Optional[str] = None
 
 
 @app.post("/api/scheduler/push")
 def push_study_blocks(req: PushBlocksRequest):
-    """Push AI-generated study blocks to Google Calendar."""
-    service = _get_gcal_service()
+    """Push AI-generated study blocks to the requesting user's Google Calendar."""
+    service = _get_gcal_service(req.uid)
     if not service:
         return JSONResponse({"error": "Google Calendar not connected"}, status_code=401)
 
@@ -1757,9 +1973,27 @@ def push_study_blocks(req: PushBlocksRequest):
 # ── Google Calendar Sync ─────────────────────────────────────────────────────
 
 GCAL_CREDS_FILE = BASE_DIR / "gcal_credentials.json"
-GCAL_TOKEN_FILE = BASE_DIR / "gcal_token.json"
+GCAL_LEGACY_TOKEN_FILE = BASE_DIR / "gcal_token.json"   # Pre-multi-tenant token (server owner)
+GCAL_TOKENS_DIR = BASE_DIR / "gcal_tokens"
 GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 GCAL_EMAIL = _os.environ.get("GCAL_EMAIL", "")
+
+
+def _gcal_token_path(uid: str | None) -> Path:
+    """Where to store/look up a Google Calendar token for a given Firebase uid.
+
+    None / empty uid falls back to the legacy single-tenant file so older
+    clients keep working until they're updated to send the uid.
+    """
+    if not uid:
+        return GCAL_LEGACY_TOKEN_FILE
+    GCAL_TOKENS_DIR.mkdir(parents=True, exist_ok=True)
+    # Sanitize: uids from Firebase are already alphanumeric, but defensively strip
+    # anything that could form a path traversal.
+    safe = "".join(c for c in uid if c.isalnum() or c in ("-", "_"))
+    if not safe:
+        safe = "_anon_"
+    return GCAL_TOKENS_DIR / f"{safe}.json"
 
 # Quarter instruction date ranges
 TERM_DATES = {
@@ -1777,21 +2011,30 @@ TERM_LABELS = {
 }
 
 
-def _get_gcal_service():
-    """Get authenticated Google Calendar service, or None if not set up."""
+def _get_gcal_service(uid: str | None = None):
+    """Return an authorized Google Calendar service for the given Firebase uid.
+
+    Looks up a per-uid token first; if missing, falls back to the legacy single-tenant
+    file so older sessions don't break. Returns None when there's no valid token.
+    """
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request as GRequest
     from googleapiclient.discovery import build
 
+    token_file = _gcal_token_path(uid)
+    if not token_file.exists() and uid:
+        # Don't auto-promote the legacy token for an unknown uid — that would
+        # leak the owner's calendar to whichever new user signed in first.
+        return None
+
     creds = None
-    if GCAL_TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(GCAL_TOKEN_FILE), GCAL_SCOPES)
+    if token_file.exists():
+        creds = Credentials.from_authorized_user_file(str(token_file), GCAL_SCOPES)
 
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(GRequest())
-            with open(GCAL_TOKEN_FILE, "w") as f:
+            with open(token_file, "w") as f:
                 f.write(creds.to_json())
         except Exception:
             creds = None
@@ -1803,10 +2046,10 @@ def _get_gcal_service():
 
 
 @app.get("/api/gcal/status")
-def gcal_status():
-    """Check if Google Calendar is connected."""
+def gcal_status(uid: str | None = None):
+    """Check whether the requesting user has connected their Google Calendar."""
     has_creds = GCAL_CREDS_FILE.exists()
-    service = _get_gcal_service() if has_creds else None
+    service = _get_gcal_service(uid) if has_creds else None
     return {
         "configured": has_creds,
         "connected": service is not None,
@@ -1814,20 +2057,25 @@ def gcal_status():
     }
 
 
-GCAL_REDIRECT_URI = "http://localhost:8000/api/gcal/callback"
+GCAL_REDIRECT_URI = _os.environ.get("GCAL_REDIRECT_URI", "http://localhost:8000/api/gcal/callback")
+GCAL_POST_AUTH_REDIRECT = _os.environ.get("GCAL_POST_AUTH_REDIRECT", "http://localhost:5173/?gcal=connected")
 
-# Store the flow object between auth and callback requests
-_gcal_pending_flow = {"flow": None}
+# Per-uid OAuth flows in flight. The user lands at /api/gcal/auth?uid=... — we stash the
+# Flow object here keyed by uid AND pass the uid into OAuth's state parameter so the
+# callback can find the right flow even if the user opens auth in two tabs.
+_gcal_pending_flows: dict = {}
 
 
 @app.get("/api/gcal/auth")
-def gcal_auth():
-    """Start OAuth flow. Returns auth URL to open in browser."""
+def gcal_auth(uid: str = Query(default="")):
+    """Start OAuth flow for the given uid. Returns the URL the client should redirect to."""
     if not GCAL_CREDS_FILE.exists():
         return JSONResponse(
-            {"error": "gcal_credentials.json not found. Download OAuth client credentials from Google Cloud Console and save to project root."},
+            {"error": "gcal_credentials.json not found on the server. The deployment owner must add OAuth client credentials."},
             status_code=400,
         )
+    if not uid:
+        return JSONResponse({"error": "Missing uid — sign in first."}, status_code=400)
 
     import os
     os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
@@ -1837,47 +2085,71 @@ def gcal_auth():
         str(GCAL_CREDS_FILE),
         scopes=GCAL_SCOPES,
         redirect_uri=GCAL_REDIRECT_URI,
+        # Embed the uid as the OAuth state so the callback can match it back.
+        state=uid,
     )
 
-    auth_url, state = flow.authorization_url(
+    auth_url, _state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
 
-    # Persist the flow so callback can use it (has the code_verifier)
-    _gcal_pending_flow["flow"] = flow
-
+    _gcal_pending_flows[uid] = flow
     return {"auth_url": auth_url}
 
 
 @app.get("/api/gcal/callback")
 def gcal_callback(code: str = Query(...), scope: str = Query(default=""), state: str = Query(default="")):
-    """OAuth callback — exchanges code for token."""
-    flow = _gcal_pending_flow.get("flow")
+    """OAuth callback — exchanges code for token, scoped to the uid stashed in state."""
+    uid = state.strip()
+    if not uid:
+        return JSONResponse({"error": "Missing state — restart the connect flow."}, status_code=400)
+
+    flow = _gcal_pending_flows.pop(uid, None)
     if not flow:
-        return JSONResponse({"error": "No pending OAuth flow. Start again from Connect button."}, status_code=400)
+        return JSONResponse(
+            {"error": "No pending OAuth flow for this user. Start again from Connect button."},
+            status_code=400,
+        )
 
     try:
         flow.fetch_token(code=code)
-
         creds = flow.credentials
-        with open(GCAL_TOKEN_FILE, "w") as f:
+        token_file = _gcal_token_path(uid)
+        with open(token_file, "w") as f:
             f.write(creds.to_json())
 
-        _gcal_pending_flow["flow"] = None  # Clean up
-
         from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="http://localhost:5173/?gcal=connected")
+        return RedirectResponse(url=GCAL_POST_AUTH_REDIRECT)
     except Exception as e:
-        logger.error("GCal callback error: %s", e)
-        _gcal_pending_flow["flow"] = None
+        logger.error("GCal callback error for uid=%s: %s", uid, e)
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/gcal/disconnect")
+def gcal_disconnect(payload: dict):
+    """Delete the stored Google Calendar token for the requesting user.
+
+    Doesn't revoke at Google's end — that requires an extra API call and most users won't
+    care. They can revoke via myaccount.google.com if they want a hard cutoff.
+    """
+    uid = payload.get("uid")
+    if not uid:
+        return JSONResponse({"error": "Missing uid"}, status_code=400)
+    token_file = _gcal_token_path(uid)
+    if token_file.exists():
+        try:
+            token_file.unlink()
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+    return {"disconnected": True}
 
 
 class GCalSyncRequest(BaseModel):
     term: str
     courses: list  # SavedCourse[] from frontend
+    uid: Optional[str] = None
 
 
 DAY_MAP_GCAL = {
@@ -1935,7 +2207,7 @@ def gcal_sync(req: GCalSyncRequest):
     - This means: if the user removes a course in the app, its GCal events disappear
       on the next sync — and we never touch manually-added events.
     """
-    service = _get_gcal_service()
+    service = _get_gcal_service(req.uid)
     if not service:
         return JSONResponse({"error": "Google Calendar not connected. Authorize first."}, status_code=401)
 
@@ -2185,6 +2457,8 @@ class CouncillorRequest(BaseModel):
     messages: List[ChatMessage]
     model: str = "gemini"
     gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    uid: Optional[str] = None
 
 
 @app.post("/api/councillor")
@@ -2205,7 +2479,10 @@ def councillor_chat(req: CouncillorRequest):
     if req.model == "gemini":
         return StreamingResponse(_stream_gemini(system_prompt, conversation, req.gemini_api_key), media_type="text/event-stream")
 
-    return StreamingResponse(_stream_claude(system_prompt, conversation, req.model), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_claude_dispatch(system_prompt, conversation, req.model, req.anthropic_api_key),
+        media_type="text/event-stream",
+    )
 
 
 # ── Campus Events & Academic Calendar ────────────────────────────────────────
@@ -3406,6 +3683,8 @@ class DiningChatRequest(BaseModel):
     messages: List[ChatMessage]
     model: str = "gemini"
     gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    uid: Optional[str] = None
 
 
 @app.post("/api/dining/chat")
@@ -3440,7 +3719,10 @@ def dining_chat(req: DiningChatRequest):
 
     if req.model == "gemini":
         return StreamingResponse(_stream_gemini(system, conversation, req.gemini_api_key), media_type="text/event-stream")
-    return StreamingResponse(_stream_claude(system, conversation, req.model), media_type="text/event-stream")
+    return StreamingResponse(
+        _stream_claude_dispatch(system, conversation, req.model, req.anthropic_api_key),
+        media_type="text/event-stream",
+    )
 
 
 # ── Transit Tracker ──────────────────────────────────────────────────────────

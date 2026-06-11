@@ -26,8 +26,8 @@ const LiveStatus = lazy(() => import('./components/LiveStatus').then((m) => ({ d
 const AutoScheduler = lazy(() => import('./components/AutoScheduler').then((m) => ({ default: m.AutoScheduler })))
 const EventsCalendar = lazy(() => import('./components/EventsCalendar').then((m) => ({ default: m.EventsCalendar })))
 import { LoginPage } from './components/LoginPage'
-import { ApiKeyOverlay } from './components/ApiKeyOverlay'
-import { useGoogleAuth, getGeminiKey, setGeminiKey } from './hooks/useGoogleAuth'
+import { ApiKeyOverlay, type ApiKeyKind } from './components/ApiKeyOverlay'
+import { useGoogleAuth, getGeminiKey, setGeminiKey, getAnthropicKey, setAnthropicKey } from './hooks/useGoogleAuth'
 import { useSeatWatch } from './hooks/useSeatWatch'
 const WatchList = lazy(() => import('./components/WatchList').then((m) => ({ default: m.WatchList })))
 const Dining = lazy(() => import('./components/Dining').then((m) => ({ default: m.Dining })))
@@ -36,6 +36,7 @@ const Internships = lazy(() => import('./components/Internships').then((m) => ({
 const PrereqChains = lazy(() => import('./components/PrereqChains').then((m) => ({ default: m.PrereqChains })))
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ToastProvider, useToast } from './components/Toast'
+import { PwaUpdatePrompt } from './components/PwaUpdatePrompt'
 import { useTheme } from './components/ThemeToggle'
 
 function ViewLoader() {
@@ -50,28 +51,36 @@ export default function App() {
   const { user, loading, signIn, logOut, authError } = useGoogleAuth()
   const { theme, toggle: toggleTheme } = useTheme()
   const [geminiKey, setGeminiKeyState] = useState<string | null>(null)
-  const [showKeyOverlay, setShowKeyOverlay] = useState(false)
+  const [anthropicKey, setAnthropicKeyState] = useState<string | null>(null)
+  // When non-null, the API-key overlay is shown asking for that provider's key.
+  const [keyOverlayKind, setKeyOverlayKind] = useState<ApiKeyKind | null>(null)
 
-  // Sync gemini key state when user changes (don't auto-show overlay — only on AI use)
+  // Sync stored API keys when user changes (don't auto-show overlay — only on AI use)
   useEffect(() => {
     if (user) {
-      const stored = getGeminiKey(user.uid)
-      setGeminiKeyState(stored)
+      setGeminiKeyState(getGeminiKey(user.uid))
+      setAnthropicKeyState(getAnthropicKey(user.uid))
     } else {
       setGeminiKeyState(null)
-      setShowKeyOverlay(false)
+      setAnthropicKeyState(null)
+      setKeyOverlayKind(null)
     }
   }, [user])
 
   const handleSaveKey = (key: string) => {
-    if (!user) return
-    setGeminiKey(user.uid, key)
-    setGeminiKeyState(key)
-    setShowKeyOverlay(false)
+    if (!user || !keyOverlayKind) return
+    if (keyOverlayKind === 'gemini') {
+      setGeminiKey(user.uid, key)
+      setGeminiKeyState(key)
+    } else {
+      setAnthropicKey(user.uid, key)
+      setAnthropicKeyState(key)
+    }
+    setKeyOverlayKind(null)
   }
 
-  const handleRequestKey = useCallback(() => {
-    setShowKeyOverlay(true)
+  const handleRequestKey = useCallback((kind: ApiKeyKind = 'gemini') => {
+    setKeyOverlayKind(kind)
   }, [])
 
   if (loading) {
@@ -88,10 +97,18 @@ export default function App() {
 
   return (
     <ToastProvider>
-      {showKeyOverlay && <ApiKeyOverlay onSubmit={handleSaveKey} />}
+      <PwaUpdatePrompt />
+      {keyOverlayKind && (
+        <ApiKeyOverlay
+          kind={keyOverlayKind}
+          onSubmit={handleSaveKey}
+          onCancel={() => setKeyOverlayKind(null)}
+        />
+      )}
       <AuthenticatedApp
         onLogout={logOut}
         geminiKey={geminiKey}
+        anthropicKey={anthropicKey}
         onRequestKey={handleRequestKey}
         uid={user.uid}
         userDisplayName={user.displayName}
@@ -106,6 +123,7 @@ export default function App() {
 function AuthenticatedApp({
   onLogout,
   geminiKey,
+  anthropicKey,
   onRequestKey,
   uid,
   userDisplayName,
@@ -115,7 +133,8 @@ function AuthenticatedApp({
 }: {
   onLogout: () => void
   geminiKey: string | null
-  onRequestKey: () => void
+  anthropicKey: string | null
+  onRequestKey: (kind?: ApiKeyKind) => void
   uid: string
   userDisplayName: string | null
   userPhotoURL: string | null
@@ -162,7 +181,7 @@ function AuthenticatedApp({
     if (all.includes('offline')) return 'offline'
     return 'idle'
   })()
-  const seatWatch = useSeatWatch(term)
+  const seatWatch = useSeatWatch(term, uid)
 
   const [termOptions, setTermOpts] = useState(TERM_OPTIONS)
 
@@ -238,14 +257,17 @@ function AuthenticatedApp({
   // Build completed courses context for AI
   const completedContext = completedCourses.asContextString()
 
-  // Wrap sendMessage to inject gemini key
+  // Wrap sendMessage to inject the right per-user API key based on model.
+  // Gemini → Gemini key; everything else (sonnet/opus/haiku) → Anthropic key.
   const handleChatSend = useCallback((text: string) => {
-    if (model === 'gemini' && !geminiKey) {
-      onRequestKey()
+    if (model === 'gemini') {
+      if (!geminiKey) { onRequestKey('gemini'); return }
+      sendMessage(text, model, term, completedContext, geminiKey, null, uid)
       return
     }
-    sendMessage(text, model, term, completedContext, geminiKey)
-  }, [model, geminiKey, onRequestKey, sendMessage, term, completedContext])
+    if (!anthropicKey) { onRequestKey('anthropic'); return }
+    sendMessage(text, model, term, completedContext, null, anthropicKey, uid)
+  }, [model, geminiKey, anthropicKey, onRequestKey, sendMessage, term, completedContext, uid])
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidenav-collapsed') === '1')
   const toggleSidebar = useCallback(() => {
@@ -347,7 +369,7 @@ function AuthenticatedApp({
     if (activeView === 'schedule' && isLoaded)
       return <MySchedule schedule={mySchedule.schedule} proposal={mySchedule.asProposal} term={term}
         onRemove={mySchedule.removeCourse} onRemoveSection={mySchedule.removeSection} onClear={handleClearSchedule}
-        termOptions={termOptions} onTermChange={setTerm} allSchedules={mySchedule.allSchedules} />
+        termOptions={termOptions} onTermChange={setTerm} allSchedules={mySchedule.allSchedules} uid={uid} />
     if (activeView === 'planner')
       return <FourYearPlan plan={fourYearPlan.plan} allCourses={courses} onAddCourse={fourYearPlan.addCourse}
         onRemoveCourse={(quarter, courseCode) => {
@@ -359,7 +381,7 @@ function AuthenticatedApp({
         totalUnits={fourYearPlan.totalUnits} />
     if (activeView === 'live') return <LiveStatus />
     if (activeView === 'scheduler')
-      return <AutoScheduler model={model} onModelChange={setModel} geminiKey={geminiKey} onRequestKey={onRequestKey} />
+      return <AutoScheduler model={model} onModelChange={setModel} geminiKey={geminiKey} anthropicKey={anthropicKey} onRequestKey={onRequestKey} uid={uid} />
     if (activeView === 'events') return <EventsCalendar />
     if (activeView === 'rooms') return <RoomFinder />
     if (activeView === 'internships') return <Internships />

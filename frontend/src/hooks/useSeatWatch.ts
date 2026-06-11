@@ -47,7 +47,7 @@ function localToWatchInfo(saved: Record<string, LocalWatch>): Record<string, Wat
   return result
 }
 
-export function useSeatWatch(term: string) {
+export function useSeatWatch(term: string, uid: string | null = null) {
   // Initialize watches from localStorage immediately so UI shows them
   const [watches, setWatches] = useState<Record<string, WatchInfo>>(() => localToWatchInfo(loadLocal()))
   const [alerts, setAlerts] = useState<SeatAlert[]>([])
@@ -56,27 +56,30 @@ export function useSeatWatch(term: string) {
   )
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Re-register watches from localStorage on mount + sync with server
+  // Build a query string with the uid, used on every GET request.
+  const uidQuery = uid ? `?uid=${encodeURIComponent(uid)}` : ''
+
+  // Re-register watches from localStorage on mount + sync with server.
+  // We re-run when the uid changes so a sign-in after the watches were loaded still gets
+  // them registered with the user's server-side bucket.
   useEffect(() => {
     const saved = loadLocal()
     const entries = Object.entries(saved)
     if (entries.length === 0) return
 
-    // Re-add watches to server
     for (const [sectionId, info] of entries) {
       fetch('/api/watch/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ section_id: sectionId, ...info }),
+        body: JSON.stringify({ section_id: sectionId, uid, ...info }),
       }).catch(() => {})
     }
 
-    // Fetch current state from server (to get last_available updates)
-    fetch('/api/watch/list')
+    fetch(`/api/watch/list${uidQuery}`)
       .then(r => r.json())
       .then(data => { if (data.watches && Object.keys(data.watches).length > 0) setWatches(data.watches) })
       .catch(() => {})
-  }, [])
+  }, [uid, uidQuery])
 
   // Poll for alerts — only when there are active watches, at 30s intervals
   const watchCountRef = useRef(Object.keys(loadLocal()).length)
@@ -85,18 +88,16 @@ export function useSeatWatch(term: string) {
   }, [watches])
 
   useEffect(() => {
-    // Don't poll if nothing is being watched
     if (Object.keys(loadLocal()).length === 0) return
 
     pollRef.current = setInterval(() => {
-      // Stop polling if all watches were removed mid-interval
       if (watchCountRef.current === 0) {
         if (pollRef.current) clearInterval(pollRef.current)
         pollRef.current = null
         return
       }
 
-      fetch('/api/watch/alerts')
+      fetch(`/api/watch/alerts${uidQuery}`)
         .then(r => r.json())
         .then(data => {
           if (data.alerts?.length) {
@@ -114,68 +115,61 @@ export function useSeatWatch(term: string) {
         })
         .catch(() => {})
 
-      fetch('/api/watch/list')
+      fetch(`/api/watch/list${uidQuery}`)
         .then(r => r.json())
         .then(data => { if (data.watches && Object.keys(data.watches).length > 0) setWatches(data.watches) })
         .catch(() => {})
     }, 30_000)
 
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [notifPermission, Object.keys(watches).length])
+  }, [notifPermission, Object.keys(watches).length, uidQuery]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addWatch = useCallback(async (sectionId: string, courseCode: string, section: string, meta?: {
     title?: string; units?: string; type?: string; days?: string; time?: string; instructor?: string; limit?: number; waitlisted?: number
   }) => {
-    // Optimistically update local state immediately
     const newWatch: WatchInfo = { course_code: courseCode, section, term, last_available: 0, limit: meta?.limit || 0, watchers: 1,
       title: meta?.title, units: meta?.units, type: meta?.type, days: meta?.days, time: meta?.time, instructor: meta?.instructor, waitlisted: meta?.waitlisted }
     setWatches(prev => ({ ...prev, [sectionId]: newWatch }))
 
-    // Save to localStorage with metadata
     const saved = loadLocal()
     saved[sectionId] = { course_code: courseCode, section, term, ...meta }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(saved))
 
-    // Send to server
     try {
       await fetch('/api/watch/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ section_id: sectionId, course_code: courseCode, section, term }),
+        body: JSON.stringify({ section_id: sectionId, course_code: courseCode, section, term, uid }),
       })
-      // Refresh from server to get accurate last_available
-      const res = await fetch('/api/watch/list')
+      const res = await fetch(`/api/watch/list${uidQuery}`)
       const data = await res.json()
       if (data.watches && Object.keys(data.watches).length > 0) setWatches(data.watches)
     } catch {
       // Server down — local state already updated, will sync later
     }
-  }, [term])
+  }, [term, uid, uidQuery])
 
   const removeWatch = useCallback(async (sectionId: string, courseCode: string, section: string) => {
-    // Optimistically remove from local state
     setWatches(prev => {
       const next = { ...prev }
       delete next[sectionId]
       return next
     })
 
-    // Remove from localStorage
     const saved = loadLocal()
     delete saved[sectionId]
     localStorage.setItem(STORAGE_KEY, JSON.stringify(saved))
 
-    // Send to server
     try {
       await fetch('/api/watch/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ section_id: sectionId, course_code: courseCode, section, term }),
+        body: JSON.stringify({ section_id: sectionId, course_code: courseCode, section, term, uid }),
       })
     } catch {
       // Server down — local state already updated
     }
-  }, [term])
+  }, [term, uid])
 
   const isWatching = useCallback((sectionId: string) => {
     return sectionId in watches

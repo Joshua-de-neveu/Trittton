@@ -17,6 +17,8 @@ interface MyScheduleProps {
   termOptions?: { value: string; label: string }[]
   onTermChange?: (term: string) => void
   allSchedules?: Record<string, SavedCourse[]>
+  // Firebase uid of the signed-in user. Required for per-user GCal sync.
+  uid: string
 }
 
 // Email fetched dynamically from /api/gcal/status
@@ -27,7 +29,7 @@ type GCalStatus = { configured: boolean; connected: boolean; email: string }
 const MIN_FULL_TIME_UNITS = 12
 const MAX_NORMAL_UNITS = 18  // Above this requires Dean/college approval
 
-export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection, onClear, termOptions, onTermChange, allSchedules }: MyScheduleProps) {
+export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection, onClear, termOptions, onTermChange, allSchedules, uid }: MyScheduleProps) {
   const blocks = buildCalendarBlocks(proposal)
   const colors = assignColors(proposal.courses)
   const conflicts = detectConflicts(blocks)
@@ -37,26 +39,29 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
-  // Check gcal status on mount
+  // The uid is required to scope all GCal API calls to this user.
+  const uidQuery = uid ? `?uid=${encodeURIComponent(uid)}` : ''
+
+  // Check gcal status on mount (re-runs if uid changes — e.g. after sign-in)
   useEffect(() => {
-    fetch('/api/gcal/status').then((r) => r.json()).then(setGcalStatus).catch(() => {})
-  }, [])
+    fetch(`/api/gcal/status${uidQuery}`).then((r) => r.json()).then(setGcalStatus).catch(() => {})
+  }, [uidQuery])
 
   // Check for OAuth callback redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('gcal') === 'connected') {
       window.history.replaceState({}, '', window.location.pathname)
-      fetch('/api/gcal/status').then((r) => r.json()).then((s) => {
+      fetch(`/api/gcal/status${uidQuery}`).then((r) => r.json()).then((s) => {
         setGcalStatus(s)
         if (s.connected) setSyncMsg('Google Calendar connected!')
       }).catch(() => {})
     }
-  }, [])
+  }, [uidQuery])
 
   const handleGCalConnect = useCallback(async () => {
     try {
-      const res = await fetch('/api/gcal/auth')
+      const res = await fetch(`/api/gcal/auth${uidQuery}`)
       const data = await res.json()
       if (data.auth_url) {
         window.location.href = data.auth_url
@@ -66,7 +71,22 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
     } catch {
       setSyncMsg('Failed to start authorization')
     }
-  }, [])
+  }, [uidQuery])
+
+  const handleGCalDisconnect = useCallback(async () => {
+    if (!uid) return
+    try {
+      await fetch('/api/gcal/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid }),
+      })
+      setGcalStatus((prev) => prev ? { ...prev, connected: false } : prev)
+      setSyncMsg('Disconnected from Google Calendar')
+    } catch {
+      setSyncMsg('Failed to disconnect')
+    }
+  }, [uid])
 
   const handleGCalSync = useCallback(async () => {
     setSyncing(true)
@@ -75,7 +95,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
       const res = await fetch('/api/gcal/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ term, courses: schedule }),
+        body: JSON.stringify({ term, courses: schedule, uid }),
       })
       const data = await res.json()
       if (data.success) {
@@ -93,7 +113,7 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
     } finally {
       setSyncing(false)
     }
-  }, [term, schedule])
+  }, [term, schedule, uid])
 
   // Auto-sync when schedule changes (if connected).
   // We INTENTIONALLY no longer bail when schedule.length === 0 — an empty schedule
@@ -216,24 +236,35 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
           <div className="flex gap-2 flex-wrap">
             {/* Google Calendar sync */}
             {gcalStatus?.connected ? (
-              <button
-                onClick={handleGCalSync}
-                disabled={syncing}
-                className="px-3 py-1.5 rounded-lg text-[12px] font-medium
-                  bg-green/10 text-green border border-green/20
-                  hover:bg-green/20 transition-all cursor-pointer flex items-center gap-1.5
-                  disabled:opacity-50"
-                title={`Sync to Google Calendar (${gcalStatus?.email || 'your Google Calendar'})`}
-              >
-                {syncing ? (
-                  <span className="w-3 h-3 border-2 border-green/30 border-t-green rounded-full animate-spin" />
-                ) : (
-                  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
-                  </svg>
-                )}
-                {syncing ? 'Syncing...' : 'Sync Calendar'}
-              </button>
+              <>
+                <button
+                  onClick={handleGCalSync}
+                  disabled={syncing}
+                  className="px-3 py-1.5 rounded-lg text-[12px] font-medium
+                    bg-green/10 text-green border border-green/20
+                    hover:bg-green/20 transition-all cursor-pointer flex items-center gap-1.5
+                    disabled:opacity-50"
+                  title="Sync this schedule to your Google Calendar"
+                >
+                  {syncing ? (
+                    <span className="w-3 h-3 border-2 border-green/30 border-t-green rounded-full animate-spin" />
+                  ) : (
+                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                    </svg>
+                  )}
+                  {syncing ? 'Syncing...' : 'Sync Calendar'}
+                </button>
+                <button
+                  onClick={handleGCalDisconnect}
+                  className="px-2 py-1.5 rounded-lg text-[12px] font-medium
+                    bg-card border border-border text-muted
+                    hover:text-red hover:border-red/30 transition-all cursor-pointer"
+                  title="Disconnect Google Calendar from this account"
+                >
+                  Disconnect
+                </button>
+              </>
             ) : gcalStatus?.configured ? (
               <button
                 onClick={handleGCalConnect}

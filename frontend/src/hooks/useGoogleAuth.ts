@@ -52,7 +52,10 @@ export function useGoogleAuth() {
   return { user, loading, signIn, logOut, authError }
 }
 
-// ── Gemini API Key helpers (keyed per UID) ──
+// ── Per-UID API Key helpers ──
+// Both keys live in localStorage scoped to the Firebase uid so they never cross between
+// accounts on the same browser. Nothing ever leaves the browser except as a body field on
+// the chat API call.
 
 export function getGeminiKey(uid: string): string | null {
   return localStorage.getItem(`api_key_${uid}`)
@@ -64,4 +67,16 @@ export function setGeminiKey(uid: string, key: string) {
 
 export function removeGeminiKey(uid: string) {
   localStorage.removeItem(`api_key_${uid}`)
+}
+
+export function getAnthropicKey(uid: string): string | null {
+  return localStorage.getItem(`anthropic_key_${uid}`)
+}
+
+export function setAnthropicKey(uid: string, key: string) {
+  localStorage.setItem(`anthropic_key_${uid}`, key)
+}
+
+export function removeAnthropicKey(uid: string) {
+  localStorage.removeItem(`anthropic_key_${uid}`)
 }

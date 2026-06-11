@@ -25,7 +25,7 @@ const DIFF_COLORS = ['', '#3dd68c', '#3dd68c', '#f5c842', '#ff9f43', '#f25f5c']
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const START_HOUR = 7; const END_HOUR = 23; const HOUR_HEIGHT = 40
 
-function uid() { return Math.random().toString(36).slice(2, 9) }
+function randomId() { return Math.random().toString(36).slice(2, 9) }
 function getToday() { return localDateStr(new Date()) }
 function getWeekEnd() { const d = new Date(); d.setDate(d.getDate() + 6); return localDateStr(d) }
 function fmtDur(h: number) { return h < 1 ? `${Math.round(h * 60)}m` : `${Math.floor(h)}h${Math.round((h % 1) * 60) > 0 ? `${Math.round((h % 1) * 60)}m` : ''}` }
@@ -60,7 +60,7 @@ function blockPos(block: TimeBlock, weekDates: { date: string }[]) {
 
 type LeftTab = 'assignments' | 'leisure' | 'chat'
 
-export function AutoScheduler({ model, onModelChange, geminiKey }: { model: string; onModelChange?: (m: string) => void; geminiKey?: string | null; onRequestKey?: () => void }) {
+export function AutoScheduler({ model, onModelChange, geminiKey, anthropicKey, uid }: { model: string; onModelChange?: (m: string) => void; geminiKey?: string | null; anthropicKey?: string | null; onRequestKey?: () => void; uid: string }) {
   const [assignments, setAssignments] = useState<Assignment[]>(load(ASSIGN_KEY, []))
   const [leisure, setLeisure] = useState<Leisure[]>(load(LEISURE_KEY, []))
   const [result, setResult] = useState<ScheduleResult | null>(null)
@@ -86,23 +86,24 @@ export function AutoScheduler({ model, onModelChange, geminiKey }: { model: stri
   useEffect(() => { localStorage.setItem(ASSIGN_KEY, JSON.stringify(assignments)) }, [assignments])
   useEffect(() => { localStorage.setItem(LEISURE_KEY, JSON.stringify(leisure)) }, [leisure])
 
-  // Fetch GCal events
+  // Fetch GCal events (scoped to this user)
   useEffect(() => {
-    fetch(`/api/scheduler/events?start=${weekDates[0].date}&end=${weekDates[6].date}`)
+    const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
+    fetch(`/api/scheduler/events?start=${weekDates[0].date}&end=${weekDates[6].date}${uidParam}`)
       .then((r) => r.json()).then((d) => { if (d.events) setCalEvents(d.events) }).catch(() => {})
-  }, []) // eslint-disable-line
+  }, [uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll chat
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMsgs])
 
   const addAssignment = () => {
     if (!aName.trim() || !aDue) return
-    setAssignments((p) => [...p, { id: uid(), name: aName.trim(), dueDate: aDue, difficulty: aDiff, done: false }])
+    setAssignments((p) => [...p, { id: randomId(), name: aName.trim(), dueDate: aDue, difficulty: aDiff, done: false }])
     setAName(''); setADue(''); setADiff(3)
   }
   const addLeisure = () => {
     if (!lName.trim()) return
-    setLeisure((p) => [...p, { id: uid(), name: lName.trim(), preferredDay: lDay, preferredTime: lTime, duration: lDur }])
+    setLeisure((p) => [...p, { id: randomId(), name: lName.trim(), preferredDay: lDay, preferredTime: lTime, duration: lDur }])
     setLName(''); setLDay(''); setLTime(''); setLDur(1)
   }
 
@@ -117,7 +118,9 @@ export function AutoScheduler({ model, onModelChange, geminiKey }: { model: stri
           assignments: pending.map((a) => ({ name: a.name, due_date: a.dueDate, difficulty: a.difficulty })),
           leisure: leisure.map((l) => ({ name: l.name, preferred_day: l.preferredDay, preferred_time: l.preferredTime, duration: l.duration })),
           start_date: getToday(), end_date: getWeekEnd(), model,
+          uid,
           ...(model === 'gemini' && geminiKey ? { gemini_api_key: geminiKey } : {}),
+          ...(model !== 'gemini' && anthropicKey ? { anthropic_api_key: anthropicKey } : {}),
         }),
       })
       const data = await res.json()
@@ -125,18 +128,18 @@ export function AutoScheduler({ model, onModelChange, geminiKey }: { model: stri
       if (data.busy_blocks?.length) setCalEvents(data.busy_blocks)
     } catch { setMsg('Failed to generate') }
     finally { setLoading(false) }
-  }, [assignments, leisure, model, geminiKey])
+  }, [assignments, leisure, model, geminiKey, anthropicKey, uid])
 
   const pushToCalendar = useCallback(async () => {
     if (!result) return; setPushing(true)
     try {
       const blocks = [...result.study_blocks, ...result.guilt_free, ...result.leisure_blocks]
-      const res = await fetch('/api/scheduler/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks }) })
+      const res = await fetch('/api/scheduler/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks, uid }) })
       const data = await res.json()
       setMsg(data.success ? `Added ${data.events_created} blocks to "${data.calendar}"` : (data.error || 'Failed'))
     } catch { setMsg('Failed to push') }
     finally { setPushing(false) }
-  }, [result])
+  }, [result, uid])
 
   // Chat send
   const sendChat = useCallback(async () => {
@@ -154,7 +157,9 @@ export function AutoScheduler({ model, onModelChange, geminiKey }: { model: stri
           current_plan: result,
           assignments: assignments.filter((a) => !a.done),
           leisure,
+          uid,
           ...(model === 'gemini' && geminiKey ? { gemini_api_key: geminiKey } : {}),
+          ...(model !== 'gemini' && anthropicKey ? { anthropic_api_key: anthropicKey } : {}),
         }),
       })
       const reader = res.body?.getReader(); const decoder = new TextDecoder()

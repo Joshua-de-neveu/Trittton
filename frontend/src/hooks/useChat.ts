@@ -41,7 +41,15 @@ export function useChat() {
   const messagesRef = useRef(messages)
   messagesRef.current = messages
 
-  const sendMessage = useCallback(async (text: string, model: string = 'sonnet', term: string = 'SP26', completedCourses: string = '', geminiKey: string | null = null) => {
+  const sendMessage = useCallback(async (
+    text: string,
+    model: string = 'sonnet',
+    term: string = 'SP26',
+    completedCourses: string = '',
+    geminiKey: string | null = null,
+    anthropicKey: string | null = null,
+    uid: string | null = null,
+  ) => {
     const userMsg: ChatMessage = { role: 'user', content: text }
     const newMessages = [...messagesRef.current, userMsg]
     setMessages(newMessages)
@@ -56,9 +64,19 @@ export function useChat() {
       const abort = new AbortController()
       abortRef.current = abort
 
-      const body: Record<string, unknown> = { messages: newMessages, include_courses: true, model, term, completed_courses: completedCourses }
+      const body: Record<string, unknown> = {
+        messages: newMessages,
+        include_courses: true,
+        model,
+        term,
+        completed_courses: completedCourses,
+        uid,
+      }
       if (model === 'gemini' && geminiKey) {
         body.gemini_api_key = geminiKey
+      }
+      if (model !== 'gemini' && anthropicKey) {
+        body.anthropic_api_key = anthropicKey
       }
 
       const res = await fetch('/api/chat', {

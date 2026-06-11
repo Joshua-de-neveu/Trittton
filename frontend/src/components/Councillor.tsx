@@ -6,7 +6,9 @@ interface CouncillorProps {
   model: string
   onModelChange?: (model: string) => void
   geminiKey?: string | null
-  onRequestKey?: () => void
+  anthropicKey?: string | null
+  uid?: string | null
+  onRequestKey?: (kind?: 'gemini' | 'anthropic') => void
 }
 
 const QUICK_TOPICS = [
@@ -20,7 +22,7 @@ const QUICK_TOPICS = [
   { label: 'Mental Health', question: 'What mental health and counseling resources are available on campus?' },
 ]
 
-export function Councillor({ model, onModelChange, geminiKey, onRequestKey }: CouncillorProps) {
+export function Councillor({ model, onModelChange, geminiKey, anthropicKey, uid, onRequestKey }: CouncillorProps) {
   const { messages, isStreaming, thinkingPhase, error, sendMessage, clearChat } = useCouncillor()
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -33,9 +35,10 @@ export function Councillor({ model, onModelChange, geminiKey, onRequestKey }: Co
   const handleSend = () => {
     const text = input.trim()
     if (!text || isStreaming) return
-    if (model === 'gemini' && !geminiKey && onRequestKey) { onRequestKey(); return }
+    if (model === 'gemini' && !geminiKey && onRequestKey) { onRequestKey('gemini'); return }
+    if (model !== 'gemini' && !anthropicKey && onRequestKey) { onRequestKey('anthropic'); return }
     setInput('')
-    sendMessage(text, model, geminiKey ?? null)
+    sendMessage(text, model, geminiKey ?? null, anthropicKey ?? null, uid ?? null)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -47,7 +50,7 @@ export function Councillor({ model, onModelChange, geminiKey, onRequestKey }: Co
 
   const handleQuickTopic = (question: string) => {
     if (isStreaming) return
-    sendMessage(question, model, geminiKey ?? null)
+    sendMessage(question, model, geminiKey ?? null, anthropicKey ?? null, uid ?? null)
   }
 
   // Parse options blocks from assistant messages
