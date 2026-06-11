@@ -56,8 +56,19 @@ _firebase_admin_init_error: str | None = None
 
 
 def _init_firebase_admin() -> None:
-    """Initialize firebase_admin once, using credentials from an env var or the
-    default application credentials (Render / GCP). Safe to call multiple times.
+    """Initialize firebase_admin once. Tries three setup options, simplest first:
+
+      1) FIREBASE_PROJECT_ID — just the project ID. Sufficient for ID-token
+         verification, which is all our /api/*save and /api/scrape/start need.
+         (Firebase's public key fetch is unauthenticated, and verify_id_token only
+         needs the project ID to validate the `aud` JWT claim.)
+      2) FIREBASE_SERVICE_ACCOUNT_JSON — full service-account JSON inline.
+         Needed only if we ever call admin SDK features like minting custom tokens
+         or reading the user db (we don't, today).
+      3) GOOGLE_APPLICATION_CREDENTIALS — pointer to a service-account file
+         on disk. GCP-native; we don't run there.
+
+    Safe to call multiple times — the second call short-circuits.
     """
     global _firebase_admin_app, _firebase_admin_init_error
     if _firebase_admin_app is not None or _firebase_admin_init_error is not None:
@@ -65,16 +76,23 @@ def _init_firebase_admin() -> None:
     try:
         import firebase_admin
         from firebase_admin import credentials
-        # Two supported sources:
-        #   1) FIREBASE_SERVICE_ACCOUNT_JSON env var with the full JSON inline (Render uses this).
-        #   2) GOOGLE_APPLICATION_CREDENTIALS pointing at a file (GCP-native).
+
         sa_json = _os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+        project_id = _os.environ.get("FIREBASE_PROJECT_ID", "")
+
         if sa_json:
             sa = json.loads(sa_json)
             cred = credentials.Certificate(sa)
             _firebase_admin_app = firebase_admin.initialize_app(cred)
+        elif project_id:
+            # No service account, just a project ID. We still need a credential
+            # object for initialize_app, but we pass projectId via options so
+            # verify_id_token has what it needs to validate the JWT audience.
+            # ApplicationDefault() with no GOOGLE_APPLICATION_CREDENTIALS gives
+            # us a no-op credential, which is fine for verification.
+            cred = credentials.ApplicationDefault()
+            _firebase_admin_app = firebase_admin.initialize_app(cred, {"projectId": project_id})
         else:
-            # Falls back to GOOGLE_APPLICATION_CREDENTIALS / metadata service.
             cred = credentials.ApplicationDefault()
             _firebase_admin_app = firebase_admin.initialize_app(cred)
     except Exception as e:
