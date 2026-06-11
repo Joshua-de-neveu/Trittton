@@ -243,13 +243,19 @@ export function useClientScraper(onComplete?: (courses: Course[]) => void) {
         }
       }
 
-      // 4. Save to server
+      // 4. Save to server (signed-in users only — the endpoint requires a Firebase ID token)
       try {
-        await fetch('/api/courses/save', {
+        const { authFetch } = await import('../lib/auth')
+        const res = await authFetch('/api/courses/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ courses: allCourses, term }),
         })
+        if (!res.ok && res.status !== 401) {
+          // 401 just means "not signed in" — that's fine, we keep the local copy.
+          // Other failures may be worth surfacing to the user.
+          console.warn('save_courses failed', res.status, await res.text().catch(() => ''))
+        }
       } catch {
         // Save failed, but we still have the data locally
       }

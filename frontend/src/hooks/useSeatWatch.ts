@@ -81,29 +81,40 @@ export function useSeatWatch(term: string, uid: string | null = null) {
       .catch(() => {})
   }, [uid, uidQuery])
 
-  // Poll for alerts — only when there are active watches, at 30s intervals
-  const watchCountRef = useRef(Object.keys(loadLocal()).length)
-  useEffect(() => {
-    watchCountRef.current = Object.keys(watches).length
-  }, [watches])
+  // Poll for alerts — only when there are active watches, at 30s intervals.
+  //
+  // The previous effect listed `Object.keys(watches).length` in its dep array, which
+  // recreated the entire setInterval on EVERY single watches update. If an alert was
+  // about to fire from the old interval, it was torn down + a new one started, so
+  // alerts could be silently missed during the 30s window. Now we hold the polling
+  // state in refs and only re-run the effect when the watches set crosses from
+  // "empty" to "non-empty" (and vice versa).
+  const watchesRef = useRef(watches)
+  watchesRef.current = watches
+  const notifPermissionRef = useRef(notifPermission)
+  notifPermissionRef.current = notifPermission
+  const uidQueryRef = useRef(uidQuery)
+  uidQueryRef.current = uidQuery
+
+  const hasAnyWatches = Object.keys(watches).length > 0 || Object.keys(loadLocal()).length > 0
 
   useEffect(() => {
-    if (Object.keys(loadLocal()).length === 0) return
+    if (!hasAnyWatches) return
 
-    pollRef.current = setInterval(() => {
-      if (watchCountRef.current === 0) {
-        if (pollRef.current) clearInterval(pollRef.current)
-        pollRef.current = null
+    const tick = () => {
+      // No watches left → silence the timer.
+      if (Object.keys(watchesRef.current).length === 0 && Object.keys(loadLocal()).length === 0) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
         return
       }
-
-      fetch(`/api/watch/alerts${uidQuery}`)
+      const q = uidQueryRef.current
+      fetch(`/api/watch/alerts${q}`)
         .then(r => r.json())
         .then(data => {
           if (data.alerts?.length) {
             setAlerts(prev => [...prev, ...data.alerts])
             for (const alert of data.alerts) {
-              if (notifPermission === 'granted') {
+              if (notifPermissionRef.current === 'granted') {
                 new Notification('Seat Available!', {
                   body: `${alert.course_code} ${alert.section} now has ${alert.available} seat${alert.available !== 1 ? 's' : ''}`,
                   icon: '/favicon.svg',
@@ -115,14 +126,14 @@ export function useSeatWatch(term: string, uid: string | null = null) {
         })
         .catch(() => {})
 
-      fetch(`/api/watch/list${uidQuery}`)
+      fetch(`/api/watch/list${q}`)
         .then(r => r.json())
         .then(data => { if (data.watches && Object.keys(data.watches).length > 0) setWatches(data.watches) })
         .catch(() => {})
-    }, 30_000)
-
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [notifPermission, Object.keys(watches).length, uidQuery]) // eslint-disable-line react-hooks/exhaustive-deps
+    }
+    pollRef.current = setInterval(tick, 30_000)
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
+  }, [hasAnyWatches])
 
   const addWatch = useCallback(async (sectionId: string, courseCode: string, section: string, meta?: {
     title?: string; units?: string; type?: string; days?: string; time?: string; instructor?: string; limit?: number; waitlisted?: number

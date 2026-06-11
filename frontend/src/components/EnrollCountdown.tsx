@@ -5,12 +5,40 @@ const LS_ANSWERS_KEY = 'ucsd-enroll-answers'
 
 // UCSD enrollment order: seniors → juniors → sophomores → freshmen
 // First pass opens on staggered days, second pass ~7 days after first pass start.
-// Times are typically 8:00 AM PST.
+// Times are typically 8:00 AM Pacific.
 const YEAR_OFFSETS: Record<string, { first: number; second: number }> = {
   'Senior':    { first: 0, second: 7 },
   'Junior':    { first: 1, second: 8 },
   'Sophomore': { first: 2, second: 9 },
   'Freshman':  { first: 3, second: 10 },
+}
+
+// 8 AM Pacific time, expressed as the absolute UTC epoch millis for the given
+// YYYY-MM-DD calendar date. UCSD enrollment is always at 8am America/Los_Angeles,
+// which we resolve correctly across DST without depending on the user's locale.
+function pacific8amEpoch(yyyymmdd: string): number {
+  // Strategy: ask the JS engine to format an Intl date for the LA timezone, then
+  // back-compute the offset. This handles PST (-08:00) vs PDT (-07:00) correctly.
+  const [y, m, d] = yyyymmdd.split('-').map(Number)
+  if (!y || !m || !d) return NaN
+  // Build a "wall clock" UTC date at 8 AM, then shift by the LA UTC offset on that day.
+  const wallUtc = Date.UTC(y, m - 1, d, 8, 0, 0)
+  // Use Intl to discover what offset LA was on for that wall time.
+  const laParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(wallUtc))
+  const get = (t: string) => Number(laParts.find((p) => p.type === t)?.value)
+  const ly = get('year'); const lm = get('month'); const ld = get('day')
+  const lh = get('hour') === 24 ? 0 : get('hour')
+  const lmin = get('minute'); const ls = get('second')
+  const laAsUtc = Date.UTC(ly, lm - 1, ld, lh, lmin, ls)
+  // Offset in ms between "what LA's wall clock would show" and "what the input UTC moment is".
+  const offsetMs = wallUtc - laAsUtc
+  // Add it back so the input "8 AM LA wall time" becomes the corresponding absolute UTC moment.
+  return wallUtc + offsetMs
 }
 
 interface Answers {
@@ -72,13 +100,20 @@ function findRelevantEnrollDate(events: EnrollEvent[]): string | null {
   return null
 }
 
-function computeEnrollDate(baseDate: string, year: string, pass: string): string {
+// Returns the absolute UTC epoch millis (as a string for localStorage) for the user's
+// enrollment moment. The previous version did toISOString().slice(0,16) on a
+// local-time Date which silently dropped the timezone — every Pacific user saw the
+// countdown 7-8 hours off depending on whether DST was active.
+function computeEnrollEpoch(baseDate: string, year: string, pass: string): number {
   const offsets = YEAR_OFFSETS[year]
-  if (!offsets) return baseDate + 'T08:00:00'
-  const dayOffset = pass === 'First Pass' ? offsets.first : offsets.second
-  const d = new Date(baseDate + 'T08:00:00')
-  d.setDate(d.getDate() + dayOffset)
-  return d.toISOString().slice(0, 16)
+  const dayOffset = offsets ? (pass === 'First Pass' ? offsets.first : offsets.second) : 0
+  // Add dayOffset whole days to baseDate (still in YYYY-MM-DD form) then resolve to LA 8am.
+  const [y, m, d] = baseDate.split('-').map(Number)
+  if (!y || !m || !d) return NaN
+  const shifted = new Date(Date.UTC(y, m - 1, d))
+  shifted.setUTCDate(shifted.getUTCDate() + dayOffset)
+  const yyyymmdd = `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`
+  return pacific8amEpoch(yyyymmdd)
 }
 
 export function EnrollCountdown() {
@@ -112,24 +147,25 @@ export function EnrollCountdown() {
     const newAnswers: Answers = { year: selectedYear, pass }
 
     const baseDate = findRelevantEnrollDate(enrollEvents)
-    let date: string
+    let epoch: number
     if (baseDate) {
-      date = computeEnrollDate(baseDate, selectedYear, pass)
+      epoch = computeEnrollEpoch(baseDate, selectedYear, pass)
     } else {
-      // No calendar data at all — shouldn't happen but handle gracefully
-      const fallback = new Date()
-      fallback.setDate(fallback.getDate() + 14)
-      fallback.setHours(8, 0, 0, 0)
+      // No calendar data at all — shouldn't happen but handle gracefully.
+      // Use 2 weeks from today + the year/pass offset as a guess.
+      const now = new Date()
       const offsets = YEAR_OFFSETS[selectedYear]
-      if (offsets) {
-        fallback.setDate(fallback.getDate() + (pass === 'First Pass' ? offsets.first : offsets.second))
-      }
-      date = fallback.toISOString().slice(0, 16)
+      const extraDays = 14 + (offsets ? (pass === 'First Pass' ? offsets.first : offsets.second) : 0)
+      now.setDate(now.getDate() + extraDays)
+      const yyyymmdd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      epoch = pacific8amEpoch(yyyymmdd)
     }
 
-    localStorage.setItem(LS_KEY, date)
+    if (Number.isNaN(epoch)) return
+    const epochStr = String(epoch)
+    localStorage.setItem(LS_KEY, epochStr)
     localStorage.setItem(LS_ANSWERS_KEY, JSON.stringify(newAnswers))
-    setEnrollDate(date)
+    setEnrollDate(epochStr)
     setAnswers(newAnswers)
     setStep('done')
   }
@@ -205,8 +241,15 @@ export function EnrollCountdown() {
     )
   }
 
-  // Date is set — show countdown or "OPEN"
-  const target = new Date(enrollDate).getTime()
+  // Date is set — show countdown or "OPEN".
+  // enrollDate is now stored as epoch millis (string). Old installs may still have
+  // the broken "YYYY-MM-DDTHH:MM" string — fall back to Date parsing for those, then
+  // re-save as epoch on the next setup. The countdown for legacy installs will still
+  // be off, but the moment the user re-runs setup it's correct.
+  const asNumber = Number(enrollDate)
+  const target = Number.isFinite(asNumber) && asNumber > 1e12
+    ? asNumber
+    : new Date(enrollDate).getTime()
   const diff = target - now
 
   if (diff <= 0) {

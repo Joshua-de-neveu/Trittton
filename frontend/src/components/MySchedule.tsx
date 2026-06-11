@@ -118,7 +118,15 @@ export function MySchedule({ schedule, proposal, term, onRemove, onRemoveSection
   // Auto-sync when schedule changes (if connected).
   // We INTENTIONALLY no longer bail when schedule.length === 0 — an empty schedule
   // still needs a sync call so the server can delete the events that used to be there.
-  const scheduleHash = JSON.stringify(schedule.map((c) => c.course_code + c.sections.length))
+  //
+  // The hash captures every (course_code, type, section letter) tuple so that swapping
+  // a section (e.g. A01 → A02) actually triggers a resync. The old version only hashed
+  // course_code + sections.length, which silently desynced GCal on any section swap.
+  const scheduleHash = JSON.stringify(
+    schedule
+      .map((c) => `${c.course_code}|` + c.sections.map((s) => `${s.type}:${s.section}`).sort().join(','))
+      .sort(),
+  )
   const initialHashRef = useRef(scheduleHash)
   useEffect(() => {
     if (!gcalStatus?.connected) return

@@ -34,9 +34,90 @@ CLAUDE_BIN = shutil.which("claude") or "/opt/homebrew/bin/claude"
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
+# Legacy single-user login. Frontend uses Firebase Auth now and these endpoints are
+# largely vestigial; leaving them disabled-by-default avoids shipping a default hash.
 AUTH_EMAIL = _os.environ.get("AUTH_EMAIL", "")
-AUTH_HASH = _os.environ.get("AUTH_HASH", "16057e270cb342728edd61cd2072788626ad4f2bb58e81e0659543ea8aecebe1")
+AUTH_HASH = _os.environ.get("AUTH_HASH", "")
 _auth_tokens: set = set()
+
+# ── Firebase Admin (for ID-token verification on privileged endpoints) ──
+#
+# The frontend signs the user in with Firebase Auth (Google). For state-changing
+# endpoints that touch shared resources (writing all_courses.json, kicking off scrapes
+# that hit UCSD, pushing to our GitHub) we want to make sure the request actually
+# comes from a signed-in user, not a random scanner.
+#
+# Firebase Admin init is best-effort: when running in an environment without
+# credentials, we log a warning and let the API run in "open" mode but mark the
+# auth-required endpoints as 401. We never silently accept requests in that case.
+
+_firebase_admin_app = None
+_firebase_admin_init_error: str | None = None
+
+
+def _init_firebase_admin() -> None:
+    """Initialize firebase_admin once, using credentials from an env var or the
+    default application credentials (Render / GCP). Safe to call multiple times.
+    """
+    global _firebase_admin_app, _firebase_admin_init_error
+    if _firebase_admin_app is not None or _firebase_admin_init_error is not None:
+        return
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+        # Two supported sources:
+        #   1) FIREBASE_SERVICE_ACCOUNT_JSON env var with the full JSON inline (Render uses this).
+        #   2) GOOGLE_APPLICATION_CREDENTIALS pointing at a file (GCP-native).
+        sa_json = _os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+        if sa_json:
+            sa = json.loads(sa_json)
+            cred = credentials.Certificate(sa)
+            _firebase_admin_app = firebase_admin.initialize_app(cred)
+        else:
+            # Falls back to GOOGLE_APPLICATION_CREDENTIALS / metadata service.
+            cred = credentials.ApplicationDefault()
+            _firebase_admin_app = firebase_admin.initialize_app(cred)
+    except Exception as e:
+        _firebase_admin_init_error = str(e)
+        logger.warning("Firebase Admin init failed (auth-required endpoints will reject): %s", e)
+
+
+def _require_firebase_user(request: Request) -> dict:
+    """Verify the Authorization: Bearer <id_token> header against Firebase Auth.
+
+    Returns the decoded token payload (dict with `uid`, `email`, etc.) on success,
+    or raises an HTTPException-equivalent JSONResponse-friendly error on failure.
+
+    Always call via the helper below — it returns either the user dict or a
+    JSONResponse you should return immediately.
+    """
+    _init_firebase_admin()
+    if _firebase_admin_app is None:
+        # No credentials configured. Reject every privileged request rather than
+        # falling back to "open" which is the whole bug we're fixing.
+        return {"_error_response": JSONResponse(
+            {"error": "Server auth not configured", "detail": _firebase_admin_init_error or "missing credentials"},
+            status_code=503,
+        )}
+    auth_header = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return {"_error_response": JSONResponse(
+            {"error": "Missing Authorization: Bearer <Firebase ID token>"},
+            status_code=401,
+        )}
+    token = auth_header[len("Bearer "):].strip()
+    if not token:
+        return {"_error_response": JSONResponse({"error": "Empty bearer token"}, status_code=401)}
+    try:
+        from firebase_admin import auth as fb_auth
+        decoded = fb_auth.verify_id_token(token)
+        return {"uid": decoded.get("uid"), "email": decoded.get("email"), "claims": decoded}
+    except Exception as e:
+        # Auth-specific failures: expired, malformed, wrong audience, revoked.
+        return {"_error_response": JSONResponse(
+            {"error": "Invalid Firebase ID token", "detail": str(e)},
+            status_code=401,
+        )}
 
 
 class LoginRequest(BaseModel):
@@ -46,6 +127,11 @@ class LoginRequest(BaseModel):
 
 @app.post("/api/auth/login")
 def auth_login(req: LoginRequest):
+    # Legacy single-user login. Disabled unless both AUTH_EMAIL and AUTH_HASH are set
+    # on the server via env vars — we never want a sensible default that could be
+    # brute-forced from the repo.
+    if not AUTH_EMAIL or not AUTH_HASH:
+        return JSONResponse({"error": "Legacy login disabled"}, status_code=410)
     pw_hash = hashlib.sha256(req.password.encode()).hexdigest()
     if req.email.lower().strip() != AUTH_EMAIL or pw_hash != AUTH_HASH:
         return JSONResponse({"error": "Invalid email or password"}, status_code=401)
@@ -208,7 +294,17 @@ def get_courses(request: Request):
 # ── Scraping ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/scrape/start")
-def start_scrape(term: str = Query(default="SP26")):
+def start_scrape(request: Request, term: str = Query(default="SP26")):
+    """Kick off a server-side scrape of UCSD's Schedule of Classes.
+
+    Auth-gated because (a) the scrape hits UCSD with thousands of requests, and
+    (b) the resulting data overwrites the shared catalog. We don't want anonymous
+    callers triggering it on a public deployment.
+    """
+    user = _require_firebase_user(request)
+    if "_error_response" in user:
+        return user["_error_response"]
+
     subjects = _fetch_subjects(term) or ALL_SUBJECTS
     with scrape_lock:
         if scrape_state["status"] == "running":
@@ -223,6 +319,8 @@ def start_scrape(term: str = Query(default="SP26")):
             "events": [],
         })
 
+    logger.info("scrape/start by uid=%s — term=%s, %d subjects",
+                user.get("uid"), term, len(subjects))
     thread = threading.Thread(target=_run_scrape, args=(term, subjects), daemon=True)
     thread.start()
     return {"message": "Scrape started", "total": len(subjects)}
@@ -481,11 +579,42 @@ class SaveCoursesRequest(BaseModel):
 
 
 @app.post("/api/courses/save")
-def save_courses(req: SaveCoursesRequest):
-    """Save client-scraped course data to disk and GitHub."""
+def save_courses(req: SaveCoursesRequest, request: Request):
+    """Save client-scraped course data to disk and GitHub.
+
+    This endpoint writes the canonical all_courses.json and (when GITHUB_TOKEN is set)
+    pushes a commit. We require a verified Firebase ID token so the public deployment
+    can't be used to vandalize the catalog or trigger unauthorized GitHub pushes.
+
+    Sanity caps on payload size + course count so a signed-in user still can't blow
+    up the box with a 10 GB blob.
+    """
+    user = _require_firebase_user(request)
+    if "_error_response" in user:
+        return user["_error_response"]
+
+    # Reject obviously-malformed payloads early.
+    if not isinstance(req.courses, list):
+        return JSONResponse({"error": "courses must be a list"}, status_code=400)
+    if len(req.courses) > 50_000:
+        return JSONResponse({"error": "too many courses (cap: 50000)"}, status_code=400)
+    if len(req.courses) == 0:
+        return JSONResponse({"error": "empty courses list rejected"}, status_code=400)
+
     course_json = json.dumps(req.courses, indent=2, ensure_ascii=False)
-    with open(OUTPUT, "w", encoding="utf-8") as f:
+    if len(course_json) > 50 * 1024 * 1024:  # 50 MB hard cap
+        return JSONResponse({"error": "course data exceeds 50 MB cap"}, status_code=413)
+
+    logger.info("save_courses by uid=%s email=%s — %d courses, %d KB",
+                user.get("uid"), user.get("email"), len(req.courses), len(course_json) // 1024)
+
+    # Atomic write: write to a temp file in the same dir, then rename. Avoids leaving
+    # a half-written file if the process is killed mid-write.
+    tmp_path = OUTPUT.with_suffix(OUTPUT.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(course_json)
+    _os.replace(tmp_path, OUTPUT)
+
     # Persist to GitHub in background
     threading.Thread(
         target=_persist_to_github,
@@ -772,11 +901,19 @@ def _stream_anthropic(system_prompt: str, conversation: str, model_name: str, ap
         current_role = None
         current_lines = []
 
+    # _format_conversation emits "Student: ..." for user turns and "Assistant: ..." for
+    # assistant turns. We accept either "Student:" or "User:" for forward-compat in case
+    # the format string is ever changed.
     for line in conversation.splitlines():
-        if line.startswith("User:"):
+        matched_user_prefix = None
+        for prefix in ("Student:", "User:"):
+            if line.startswith(prefix):
+                matched_user_prefix = prefix
+                break
+        if matched_user_prefix:
             flush()
             current_role = "user"
-            tail = line[len("User:"):].lstrip()
+            tail = line[len(matched_user_prefix):].lstrip()
             if tail:
                 current_lines.append(tail)
         elif line.startswith("Assistant:"):

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { ScrapeProgress } from '../types'
+import { authFetch } from '../lib/auth'
 
 const defaultProgress: ScrapeProgress = {
   status: 'idle',
@@ -29,7 +30,7 @@ export function useScraper(onComplete?: () => void) {
     setProgress({ ...defaultProgress, status: 'running' })
 
     try {
-      const startRes = await fetch(`/api/scrape/start?term=${term}`)
+      const startRes = await authFetch(`/api/scrape/start?term=${term}`)
       if (!startRes.ok) throw new Error('Failed to start scrape')
 
       const abort = new AbortController()
