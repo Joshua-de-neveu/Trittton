@@ -1,242 +1,204 @@
-# Trittton — UCSD Course Browser & AI Schedule Planner
+# Trittton
 
-> An intelligent course planning platform for UC San Diego students. Browse courses, check professor ratings, plan your schedule with AI, and track graduation progress — all in one place.
+> An AI-powered course planning and campus utility platform for UC San Diego — built end-to-end in a single repo.
 
-By Joshua, board member and co-founder of [GAMECHANGERSai](https://gamechangersai.org)
+Browse 7,000+ UCSD courses, chat with an LLM to assemble a quarter schedule, watch sections for seat openings, check your graduation progress, find a study room, see the next bus — all behind one login.
 
----
-
-## What It Does
-
-| Feature | Description |
-|---------|-------------|
-| **Course Browser** | Search, filter, and explore 7,000+ UCSD courses with real-time seat availability |
-| **AI Schedule Planner** | Chat with Claude to build your ideal quarterly schedule with visual weekly calendar |
-| **RateMyProfessor Ratings** | Inline professor ratings (★ score, difficulty, would-take-again %) on every course card |
-| **My Schedule** | Build a mock schedule by picking individual sections, see conflicts on a weekly calendar |
-| **Graduation Progress** | Track Warren College GE + major requirements with visual progress bars |
-| **Course History** | Log completed courses so the AI knows your background and checks prerequisites |
-| **Prerequisite Warnings** | Red border + warning on courses where you haven't completed prereqs |
-| **WebReg Enrollment** | One-click "Enroll →" buttons that deep-link to UCSD's WebReg with section pre-filled |
-| **HTML Reports** | Export your proposed schedule as a standalone dark-themed HTML file |
+Built by [Joshua DeNeveu](https://github.com/Joshua-de-neveu), co-founder of [GAMECHANGERSai](https://gamechangersai.org).
 
 ---
 
-## Screenshots
+## What's inside
 
-### Browse Courses
-- Dark theme with department sidebar, search, type/availability filters
-- Inline RMP ratings (★4.2 | 3.1 diff) on every course card
-- Per-section "+" buttons to add individual sections to your schedule
-- Expand cards for prerequisites, section details, and enroll links
+**Course planning**
 
-### AI Schedule Planner
-- Full-width chat powered by Claude CLI running locally
-- Clickable quick-reply options and text prompts for guided flow
-- Visual weekly calendar with color-coded course blocks and conflict detection
-- Course info cards with live RateMyProfessor data
-- "Add to My Schedule" picker to select which proposed courses to keep
+- **Course Browser** — search/filter every section of every course in a term, with live seat counts, prereqs, and inline RateMyProfessor ratings (★/difficulty/would-take-again).
+- **AI Schedule Planner** — chat panel that proposes a full quarter schedule rendered as a weekly calendar. Backed by either Gemini 2.5 Flash or the Claude CLI (Sonnet/Opus), selectable in the header.
+- **Auto Scheduler** — non-chat alternative that generates schedules from constraints (no-conflict, time-of-day, instructor preference).
+- **My Schedule** — pick individual sections, see Mon–Fri conflicts on a calendar, export to `.ics` for Google Calendar.
+- **4-Year Plan** — drag courses across quarters; checks prereq chains.
+- **Graduation Progress** — Warren College GE + major requirement tracking (CS, CE, EE, Physics, Math, Data Science, Cog Sci) with progress bars.
+- **Completed Courses** — log what you've taken; the AI uses it for prereq checks and recommendations.
+- **Professor Compare** — side-by-side RMP stats for instructors teaching the same course.
+- **Prereq Chains** — visualize the dependency graph behind any course.
+- **Schedule Report** — export the proposed schedule as a standalone HTML file.
 
-### Graduation Progress
-- Select your major (CS, CE, EE, Physics, Math, Data Science, Cog Sci)
-- Warren College GE requirements tracked automatically
-- Green checkmarks on completed courses, red badges on what's missing
-- Overall percentage progress bar
+**Active monitoring**
+
+- **Seat Watch** — background thread on the server polls watched sections; alerts when a seat opens.
+- **Enroll Countdown** — countdown to your enrollment appointment with a one-click WebReg deep link.
+
+**Campus utilities**
+
+- **Room Finder** — find an open study room right now.
+- **Library Status**, **Dining**, **Parking**, **Transit** — live status for spots students actually check between classes.
+- **Events Calendar** — campus events.
+- **Textbooks**, **Internships**, **Advising / Councillor** — supplementary modules.
+
+**Account & sync**
+
+- Login-gated app (server-side credential hash).
+- Optional Google sign-in for calendar export and cloud-sync of your schedule, completed courses, and watch list across devices.
 
 ---
 
-## Tech Stack
+## Tech stack
 
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | React 19, TypeScript, Vite 8, Tailwind CSS 4 |
-| **Backend** | FastAPI, Uvicorn, Python 3 |
-| **AI** | Claude CLI (local) — Sonnet 4.6 or Opus 4.6, selectable in-app |
-| **Scraper** | requests + BeautifulSoup (lxml) against UCSD Schedule of Classes |
-| **Data** | RateMyProfessor GraphQL API, UCSD Catalog (prereqs), all cached locally |
-| **Testing** | Playwright (22 E2E tests), TypeScript strict mode |
-| **Persistence** | localStorage (schedule, chat, completed courses, settings), JSON file caching |
+| Layer       | Stack                                                                 |
+|-------------|-----------------------------------------------------------------------|
+| Frontend    | React 19 · TypeScript · Vite 8 · Tailwind 4 · Leaflet (campus map) · react-window (virtualized lists) |
+| Backend     | FastAPI · Uvicorn · Python 3.12                                        |
+| AI          | Google Gemini 2.5 Flash *and* Claude CLI (Sonnet 4.6 / Opus 4.6) — chosen per-request |
+| Scraping    | `requests` + `BeautifulSoup`/`lxml` against the UCSD Schedule of Classes |
+| Data        | RateMyProfessor GraphQL · UCSD Catalog (prereqs) · UCSD WebReg deep links |
+| Auth / sync | Server-side hash login · Firebase + Google OAuth for cloud sync       |
+| Calendar    | `icalendar` for `.ics` export                                          |
+| Deploy      | Dockerfile · `render.yaml` for Render                                  |
+| Testing     | Playwright (E2E)                                                       |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  React Frontend (Vite + TypeScript + Tailwind)          │
-│  ┌──────────┬──────────┬──────────┬──────────┬────────┐ │
-│  │ Browse   │ AI Plan  │ Schedule │ History  │ Grad   │ │
-│  │ Courses  │ ner      │ Builder  │ (Done)   │ Prog   │ │
-│  └──────────┴──────────┴──────────┴──────────┴────────┘ │
-└────────────────────────┬────────────────────────────────┘
-                         │ /api/*
-┌────────────────────────┴────────────────────────────────┐
-│  FastAPI Backend                                         │
-│  ┌──────────┬──────────┬──────────┬──────────┐          │
-│  │ /courses │ /chat    │ /rmp     │ /prereqs │          │
-│  │ (scrape) │ (Claude) │ (RMP)   │ (catalog)│          │
-│  └──────────┴──────────┴──────────┴──────────┘          │
-└────┬─────────────┬──────────┬──────────┬────────────────┘
-     │             │          │          │
-  UCSD SoC    Claude CLI   RMP API   UCSD Catalog
-  (scraper)   (local)     (GraphQL)  (prereqs)
+            ┌──────────────────────────────────────────────────────┐
+            │  React + Vite frontend                               │
+            │  Browse · AI Plan · My Schedule · Grad · Utilities   │
+            └────────────────────────┬─────────────────────────────┘
+                                     │  /api/*
+            ┌────────────────────────┴─────────────────────────────┐
+            │  FastAPI                                              │
+            │  ┌───────────┬──────────┬──────────┬──────────────┐  │
+            │  │ auth      │ courses  │ chat     │ rmp / prereqs│  │
+            │  │ /scrape   │ /watch   │ (Gem|Cl) │              │  │
+            │  └───────────┴──────────┴──────────┴──────────────┘  │
+            │  background: term poller · seat-watch loop            │
+            └──┬──────────┬─────────────┬───────────┬───────────────┘
+               │          │             │           │
+        UCSD SoC   Claude CLI /   RateMyProf    UCSD Catalog
+        (scrape)   Gemini API     (GraphQL)     (prereqs)
 ```
 
-**Data Flow:**
-1. Scraper POSTs to UCSD Schedule of Classes for each of 141 departments
-2. Parses HTML tables → `all_courses.json` (7,000+ courses with sections, times, availability)
-3. Frontend auto-loads on startup; if no data, auto-scrapes
-4. AI chat sends conversation + full course catalog to Claude CLI as context
-5. RMP ratings batch-fetched from GraphQL API, cached in `rmp_cache.json`
-6. Prerequisites fetched from UCSD catalog pages on demand, cached in `prereq_cache.json`
+Scraped course data lives in `all_courses.json` (~1.4 MB), regenerated on demand. Optionally persisted back to GitHub from the server when `GITHUB_TOKEN` is set so a fresh deploy starts with data.
 
 ---
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
-- **Node.js** 18+ and npm
-- **Python** 3.10+
-- **Claude CLI** installed ([claude.ai/code](https://claude.ai/code))
 
-### Quick Start
+- Node.js 18+
+- Python 3.10+ (3.12 recommended)
+- For Claude-backed chat: [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) on `PATH`
+- For Gemini-backed chat: a `GEMINI_API_KEY`
+
+### Quick start
 
 ```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/Trittton.git
+git clone https://github.com/Joshua-de-neveu/Trittton.git
 cd Trittton
 
-# Python setup
+# Python
 python3 -m venv .venv && source .venv/bin/activate
-pip install fastapi uvicorn requests beautifulsoup4 lxml
+pip install -r requirements.txt
 
-# Frontend setup
+# Frontend
 cd frontend && npm install && cd ..
 
-# Start everything
+# Run both
 ./start.sh
-# → Opens browser at http://localhost:5173
-# → Backend on :8000, frontend on :5173
-# → Auto-scrapes UCSD courses if no data exists
+# → backend on :8000, Vite dev server on :5173, browser opens automatically
 ```
 
-### Or manually:
+`start.sh` auto-creates the venv, installs deps if missing, and tails both processes. Ctrl-C kills both.
+
+### Environment
+
+Set what you need before launch (a `.env` works if you `source` it):
+
+| Variable         | Purpose                                                   | Required when                       |
+|------------------|-----------------------------------------------------------|--------------------------------------|
+| `GEMINI_API_KEY` | Gemini chat backend                                       | Using the Gemini model in the UI    |
+| `AUTH_EMAIL`     | Login email                                               | Always (login-gated app)            |
+| `AUTH_HASH`      | bcrypt-style hash of the login password                   | Always                              |
+| `GITHUB_TOKEN`   | Persist scraped course JSON back to the repo on update    | Optional (for deploys w/o disk)     |
+
+### Production / Docker
+
 ```bash
-# Terminal 1: Backend
-source .venv/bin/activate && python server.py
-
-# Terminal 2: Frontend
-cd frontend && npm run dev
-
-# Terminal 3 (optional): Run scraper standalone
-source .venv/bin/activate && python3 app.py
+# Build the frontend, package as a single container
+docker build -t trittton .
+docker run -p 8000:8000 \
+  -e GEMINI_API_KEY=... -e AUTH_EMAIL=... -e AUTH_HASH=... \
+  trittton
 ```
 
-### Run Tests
+`render.yaml` is wired for a one-click Render deploy of the same image.
+
+### Tests
+
 ```bash
 cd frontend
 npx playwright install chromium
 npx playwright test --config=e2e/playwright.config.ts
-# → 22 tests passing
 ```
 
 ---
 
-## Project Structure
+## Project layout
 
 ```
 Trittton/
-├── app.py                    # UCSD Schedule of Classes scraper
-├── server.py                 # FastAPI backend (chat, scrape, RMP, prereqs)
-├── start.sh                  # One-command launcher
-├── all_courses.json          # Scraped course data (auto-generated)
-├── rmp_cache.json            # RateMyProfessor ratings cache
-├── prereq_cache.json         # Prerequisites cache
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx           # Root — 6 views, state management
-│   │   ├── components/       # 15 React components
-│   │   │   ├── Header.tsx        # Tab navigation + term/model selectors
-│   │   │   ├── CourseCard.tsx     # Expandable card with prereqs, RMP, enroll
-│   │   │   ├── ChatPanel.tsx      # Full-width AI chat with interactive blocks
-│   │   │   ├── WeeklyCalendar.tsx # Visual Mon-Fri calendar grid
-│   │   │   ├── MySchedule.tsx     # Persistent schedule builder
-│   │   │   ├── GradProgress.tsx   # Graduation requirement tracker
-│   │   │   ├── CompletedCourses.tsx # Course history manager
-│   │   │   └── ...
-│   │   ├── hooks/            # 6 custom React hooks
-│   │   │   ├── useChat.ts        # AI streaming with thinking phases
-│   │   │   ├── useMySchedule.ts   # Persistent schedule (localStorage)
-│   │   │   ├── useRmpRatings.ts   # Batch RMP fetcher
-│   │   │   └── ...
-│   │   └── lib/              # Utilities
-│   │       ├── schedule.ts       # Time parsing, conflict detection, calendar
-│   │       ├── requirements.ts   # Warren College + major requirements data
-│   │       ├── links.ts          # URL builders (SoC, RMP, CAPEs, WebReg)
-│   │       └── chat-blocks.ts    # Interactive AI block parsers
-│   └── e2e/                  # 22 Playwright tests
-├── index.html                # Original single-file app (archived)
-└── CLAUDE.md                 # AI development instructions
+├── server.py             # FastAPI app — auth, scrape, chat (Gemini+Claude),
+│                         # RMP proxy, prereqs, seat-watch loop, term poller
+├── app.py                # Standalone scraper (writes all_courses.json)
+├── htmllls.py             # Debug: dump raw SoC HTML for a single dept
+├── start.sh              # One-command dev launcher
+├── Dockerfile · render.yaml
+├── requirements.txt
+├── all_courses.json      # Scraped course data (auto-generated)
+├── ucsd_wiki.md          # Notes the AI uses as campus context
+└── frontend/
+    ├── src/
+    │   ├── App.tsx                # Root view router
+    │   ├── components/            # 40+ React components (see What's inside)
+    │   ├── hooks/                 # useChat, useScraper, useSeatWatch,
+    │   │                           # useCloudSync, useGoogleAuth, …
+    │   └── lib/                   # schedule math, requirements data, link builders
+    └── e2e/                       # Playwright suite
 ```
 
 ---
 
-## Key Configuration
+## Data sources
 
-| Setting | Location | Default | Description |
-|---------|----------|---------|-------------|
-| Term | Header dropdown | SP26 | Academic term to scrape/browse |
-| AI Model | Header dropdown | Sonnet 4.6 | Claude model for chat |
-| Major | Grad Progress tab | — | Your intended major |
-| Scrape Delay | `app.py` DELAY | 1.0s | Seconds between requests to UCSD |
+| Source                                                       | Used for                          | Auth   |
+|--------------------------------------------------------------|-----------------------------------|--------|
+| [UCSD Schedule of Classes](https://act.ucsd.edu/scheduleOfClasses/) | Courses, sections, availability   | none   |
+| [RateMyProfessors](https://www.ratemyprofessors.com/)        | Instructor ratings                | none   |
+| [UCSD Catalog](https://catalog.ucsd.edu/)                    | Prerequisites, descriptions       | none   |
+| [WebReg](https://act.ucsd.edu/webreg2/)                      | Enroll deep links                 | UCSD   |
+| [CAPEs](https://cape.ucsd.edu/)                              | Course evaluations                | UCSD   |
 
----
-
-## About GAMECHANGERSai
-
-<a href="https://gamechangersai.org"><img src="https://img.shields.io/badge/GAMECHANGERSai-501(c)(3)-blue?style=for-the-badge" alt="GAMECHANGERSai"></a>
-
-**
+Scraping respects a configurable `DELAY` (default 1.0s) between requests.
 
 ---
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Issues and PRs welcome — especially:
 
-**Ideas for contributions:**
-- Additional college support (Muir, Revelle, Marshall, Sixth, Seventh, Eighth)
-- More major requirement definitions
-- iOS companion app
-- Course prerequisite graph visualization
-- Integration with UCSD's degree audit system
-- Social features — share schedules with friends
-
----
-
-## Data Sources
-
-| Source | Usage | Auth Required |
-|--------|-------|---------------|
-| [UCSD Schedule of Classes](https://act.ucsd.edu/scheduleOfClasses/) | Course data, sections, availability | No |
-| [RateMyProfessors](https://www.ratemyprofessors.com/) | Professor ratings, difficulty | No (GraphQL API) |
-| [UCSD Course Catalog](https://catalog.ucsd.edu/) | Prerequisites, descriptions | No |
-| [UCSD WebReg](https://act.ucsd.edu/webreg2/) | Enrollment deep links | UCSD login |
-| [CAPEs](https://cape.ucsd.edu/) | Course evaluations | UCSD login |
+- Requirement definitions for the other six colleges (Muir, Revelle, Marshall, Sixth, Seventh, Eighth) and additional majors.
+- More robust prereq parsing for irregular catalog entries.
+- iOS/Android companion.
+- Visualizations on top of the existing prereq-chain graph data.
 
 ---
 
 ## License
 
-This project is open source. Built with love, caffeine, and Claude.
-
----
+Open source. Built with caffeine, Claude, and the UCSD Schedule of Classes' surprisingly parseable HTML.
 
 <p align="center">
-  <b>Trittton</b> — Because planning your UCSD schedule shouldn't require a PhD.<br>
-  <a href="https://gamechangersai.org">gamechangersai.org</a> · Built with <a href="https://claude.ai/code">Claude Code</a>
+  <a href="https://gamechangersai.org">GAMECHANGERSai</a> · planning your UCSD schedule shouldn't take a PhD.
 </p>
