@@ -197,7 +197,7 @@ Issues and PRs welcome — especially:
 
 ## License
 
-Open source. Built with caffeine, Claude, and the UCSD Schedule of Classes' surprisingly parseable HTML.
+Open source. Built with caffeine, Dino nuggets, and the UCSD Schedule of Classes' surprisingly parseable HTML.
 
 <p align="center">
   <a href="https://gamechangersai.org">GAMECHANGERSai</a> · planning your UCSD schedule shouldn't take a PhD.
