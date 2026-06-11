@@ -196,13 +196,7 @@ Trittton/
 
 <a href="https://gamechangersai.org"><img src="https://img.shields.io/badge/GAMECHANGERSai-501(c)(3)-blue?style=for-the-badge" alt="GAMECHANGERSai"></a>
 
-**[GAMECHANGERSai](https://gamechangersai.org)** is a 501(c)(3) nonprofit dedicated to hands-on, AI-powered learning adventures that combine playful experimentation with responsible AI education.
-
-This project was created by **Joshua**, a board member and co-founder of GAMECHANGERSai, as a demonstration of how AI tools like Claude Code can empower students and creators to build production-quality software. It reflects the organization's core belief: that AI should be a collaborative partner in learning, not a replacement for human creativity and judgment.
-
-> *"Curiosity, inclusion, and responsible AI"* — the principles behind everything we build at GAMECHANGERSai.
-
-Learn more at **[gamechangersai.org](https://gamechangersai.org)** | See more AI-built projects at **[github.com/lnxgod](https://github.com/lnxgod)**
+**
 
 ---
 
