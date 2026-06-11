@@ -51,72 +51,63 @@ _auth_tokens: set = set()
 # credentials, we log a warning and let the API run in "open" mode but mark the
 # auth-required endpoints as 401. We never silently accept requests in that case.
 
-_firebase_admin_app = None
-_firebase_admin_init_error: str | None = None
+# Firebase ID token verification.
+#
+# We verify the JWT ourselves using Google's published x509 certs instead of going
+# through firebase-admin. firebase-admin's verify_id_token requires Application
+# Default Credentials even though token verification only needs the project ID +
+# unauthenticated key fetch. Render's free tier doesn't have ADC, so the admin
+# path fails. PyJWT + Google's public certs is what verify_id_token does
+# internally — we just do it directly.
+
+_FIREBASE_CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+_firebase_certs_cache: dict = {"keys": None, "expires_at": 0.0}
 
 
-def _init_firebase_admin() -> None:
-    """Initialize firebase_admin once. Tries three setup options, simplest first:
+def _firebase_project_id() -> str:
+    """Project ID for token audience validation. From FIREBASE_PROJECT_ID env var,
+    falling back to the projectId embedded in FIREBASE_SERVICE_ACCOUNT_JSON if set."""
+    pid = _os.environ.get("FIREBASE_PROJECT_ID", "").strip()
+    if pid:
+        return pid
+    sa_json = _os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+    if sa_json:
+        try:
+            return json.loads(sa_json).get("project_id", "")
+        except Exception:
+            return ""
+    return ""
 
-      1) FIREBASE_PROJECT_ID — just the project ID. Sufficient for ID-token
-         verification, which is all our /api/*save and /api/scrape/start need.
-         (Firebase's public key fetch is unauthenticated, and verify_id_token only
-         needs the project ID to validate the `aud` JWT claim.)
-      2) FIREBASE_SERVICE_ACCOUNT_JSON — full service-account JSON inline.
-         Needed only if we ever call admin SDK features like minting custom tokens
-         or reading the user db (we don't, today).
-      3) GOOGLE_APPLICATION_CREDENTIALS — pointer to a service-account file
-         on disk. GCP-native; we don't run there.
 
-    Safe to call multiple times — the second call short-circuits.
-    """
-    global _firebase_admin_app, _firebase_admin_init_error
-    if _firebase_admin_app is not None or _firebase_admin_init_error is not None:
-        return
-    try:
-        import firebase_admin
-        from firebase_admin import credentials
-
-        sa_json = _os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
-        project_id = _os.environ.get("FIREBASE_PROJECT_ID", "")
-
-        if sa_json:
-            sa = json.loads(sa_json)
-            cred = credentials.Certificate(sa)
-            _firebase_admin_app = firebase_admin.initialize_app(cred)
-        elif project_id:
-            # No service account, just a project ID. We still need a credential
-            # object for initialize_app, but we pass projectId via options so
-            # verify_id_token has what it needs to validate the JWT audience.
-            # ApplicationDefault() with no GOOGLE_APPLICATION_CREDENTIALS gives
-            # us a no-op credential, which is fine for verification.
-            cred = credentials.ApplicationDefault()
-            _firebase_admin_app = firebase_admin.initialize_app(cred, {"projectId": project_id})
-        else:
-            cred = credentials.ApplicationDefault()
-            _firebase_admin_app = firebase_admin.initialize_app(cred)
-    except Exception as e:
-        _firebase_admin_init_error = str(e)
-        logger.warning("Firebase Admin init failed (auth-required endpoints will reject): %s", e)
+def _fetch_firebase_certs() -> dict:
+    """Fetch Google's secure-token x509 certificates, cached for 1 hour."""
+    now = time.time()
+    if _firebase_certs_cache["keys"] and _firebase_certs_cache["expires_at"] > now:
+        return _firebase_certs_cache["keys"]
+    import requests as _req
+    resp = _req.get(_FIREBASE_CERTS_URL, timeout=10)
+    resp.raise_for_status()
+    keys = resp.json()
+    _firebase_certs_cache["keys"] = keys
+    # Google rotates these once per day; an hour gives us fresh keys soon enough
+    # while avoiding a fetch on every request.
+    _firebase_certs_cache["expires_at"] = now + 3600
+    return keys
 
 
 def _require_firebase_user(request: Request) -> dict:
     """Verify the Authorization: Bearer <id_token> header against Firebase Auth.
 
-    Returns the decoded token payload (dict with `uid`, `email`, etc.) on success,
-    or raises an HTTPException-equivalent JSONResponse-friendly error on failure.
-
-    Always call via the helper below — it returns either the user dict or a
-    JSONResponse you should return immediately.
+    Returns {"uid", "email", "claims"} on success, or {"_error_response": JSONResponse}
+    that the caller should return immediately.
     """
-    _init_firebase_admin()
-    if _firebase_admin_app is None:
-        # No credentials configured. Reject every privileged request rather than
-        # falling back to "open" which is the whole bug we're fixing.
+    project_id = _firebase_project_id()
+    if not project_id:
         return {"_error_response": JSONResponse(
-            {"error": "Server auth not configured", "detail": _firebase_admin_init_error or "missing credentials"},
+            {"error": "Server auth not configured", "detail": "FIREBASE_PROJECT_ID env var not set"},
             status_code=503,
         )}
+
     auth_header = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
     if not auth_header.lower().startswith("bearer "):
         return {"_error_response": JSONResponse(
@@ -126,12 +117,40 @@ def _require_firebase_user(request: Request) -> dict:
     token = auth_header[len("Bearer "):].strip()
     if not token:
         return {"_error_response": JSONResponse({"error": "Empty bearer token"}, status_code=401)}
+
     try:
-        from firebase_admin import auth as fb_auth
-        decoded = fb_auth.verify_id_token(token)
-        return {"uid": decoded.get("uid"), "email": decoded.get("email"), "claims": decoded}
+        import jwt as _jwt
+        from cryptography.x509 import load_pem_x509_certificate
+
+        unverified_header = _jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+        if not kid:
+            raise ValueError("token missing kid header")
+
+        certs = _fetch_firebase_certs()
+        cert_pem = certs.get(kid)
+        if not cert_pem:
+            # The key may have just rotated — force a refresh once before giving up.
+            _firebase_certs_cache["expires_at"] = 0.0
+            certs = _fetch_firebase_certs()
+            cert_pem = certs.get(kid)
+            if not cert_pem:
+                raise ValueError(f"unknown kid {kid}")
+
+        public_key = load_pem_x509_certificate(cert_pem.encode("ascii")).public_key()
+        decoded = _jwt.decode(
+            token,
+            key=public_key,
+            algorithms=["RS256"],
+            audience=project_id,
+            issuer=f"https://securetoken.google.com/{project_id}",
+            leeway=10,  # tolerate small clock skew
+        )
+        # Firebase ID tokens put the user id in either `sub` or `user_id`.
+        uid = decoded.get("user_id") or decoded.get("sub")
+        return {"uid": uid, "email": decoded.get("email"), "claims": decoded}
+
     except Exception as e:
-        # Auth-specific failures: expired, malformed, wrong audience, revoked.
         return {"_error_response": JSONResponse(
             {"error": "Invalid Firebase ID token", "detail": str(e)},
             status_code=401,
