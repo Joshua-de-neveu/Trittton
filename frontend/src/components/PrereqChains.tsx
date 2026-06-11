@@ -1,6 +1,8 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   PREREQ_GRAPH,
+  getCleanPrereqs,
+  getPrereqGroups,
   getCourseStatus,
   getUnlocks,
   getDepth,
@@ -143,14 +145,18 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
     const target = selectedCourse || hoveredCourse
     if (!target) return null
     const set = new Set<string>([target])
-    const prereqs = PREREQ_GRAPH[target] || []
-    prereqs.forEach((p) => set.add(p))
+    getCleanPrereqs(target).forEach((p) => set.add(p))
     getUnlocks(target).forEach((u) => set.add(u))
     return set
   }, [selectedCourse, hoveredCourse])
 
-  const activeCourse = selectedCourse
-  const activePrereqs = activeCourse ? PREREQ_GRAPH[activeCourse] || [] : []
+  // Hover previews, click pins. The detail panel shows the pinned selection when one
+  // exists; otherwise it follows the hover. This means you can rest your cursor on a
+  // course to see its prereqs, then click to lock it open for follow-up clicks.
+  const activeCourse = selectedCourse || hoveredCourse
+  const isPinned = selectedCourse !== null
+  const activePrereqs = activeCourse ? getCleanPrereqs(activeCourse) : []
+  const activePrereqGroups = activeCourse ? getPrereqGroups(activeCourse) : []
   const activeUnlocks = activeCourse ? getUnlocks(activeCourse) : []
   const activeAllDownstream = activeCourse ? getAllDownstream(activeCourse) : []
 
@@ -339,7 +345,7 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
                     <div className="flex flex-wrap gap-2">
                       {visible.map((code) => {
                         const status = getCourseStatus(code, completed)
-                        const prereqs = PREREQ_GRAPH[code] || []
+                        const prereqs = getCleanPrereqs(code)
                         const unlockCount = getUnlocks(code).length
                         const isHighlighted = highlighted?.has(code) ?? false
                         const isSelected = selectedCourse === code
@@ -380,19 +386,32 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
       {/* ── Right detail panel ── on mobile it slides up from the bottom as a sheet */}
       {activeCourse && (
         <>
-        <div className="md:hidden fixed inset-0 bg-black/40 z-40 animate-fade-in" onClick={() => setSelectedCourse(null)} aria-hidden />
-        <div className="md:w-80 md:shrink-0 md:border-l md:border-t-0 md:relative md:rounded-none md:translate-y-0
-            fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface flex flex-col overflow-hidden animate-fade-in max-h-[80vh] rounded-t-2xl">
+        {/* Backdrop only when the panel is pinned on mobile — hover preview should not blank the page */}
+        {isPinned && (
+          <div className="md:hidden fixed inset-0 bg-black/40 z-40 animate-fade-in" onClick={() => setSelectedCourse(null)} aria-hidden />
+        )}
+        <div
+          className={`md:w-80 md:shrink-0 md:border-l md:border-t-0 md:relative md:rounded-none md:translate-y-0
+            fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-surface flex flex-col overflow-hidden animate-fade-in max-h-[80vh] rounded-t-2xl
+            ${!isPinned ? 'hidden md:flex' : ''}`}
+        >
           <div className="px-5 py-5 border-b border-border">
-            <div className="flex items-center justify-between">
-              <StatusBadge status={getCourseStatus(activeCourse, completed)} />
-              <button
-                onClick={() => setSelectedCourse(null)}
-                className="text-dim hover:text-text cursor-pointer text-lg leading-none px-2"
-                aria-label="Close"
-              >
-                &times;
-              </button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <StatusBadge status={getCourseStatus(activeCourse, completed)} />
+                {!isPinned && (
+                  <span className="text-[10px] uppercase tracking-wider text-dim font-medium" title="Hover preview — click the course to pin">preview</span>
+                )}
+              </div>
+              {isPinned && (
+                <button
+                  onClick={() => setSelectedCourse(null)}
+                  className="text-dim hover:text-text cursor-pointer text-lg leading-none px-2"
+                  aria-label="Close"
+                >
+                  &times;
+                </button>
+              )}
             </div>
             <h2 className="text-lg font-bold text-text mt-2 font-mono">{activeCourse}</h2>
             <div className="flex gap-2 mt-3 flex-wrap">
@@ -416,49 +435,71 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            {/* Prereqs */}
+            {/* Prereqs — grouped by subject, with an "any of" hint when the group looks like alternatives */}
             <section>
-              <div className="text-[11px] font-medium text-dim uppercase tracking-wider mb-2">
-                Prerequisites ({activePrereqs.length})
+              <div className="flex items-baseline justify-between mb-2">
+                <div className="text-[11px] font-medium text-dim uppercase tracking-wider">
+                  Prerequisites ({activePrereqs.length})
+                </div>
               </div>
               {activePrereqs.length === 0 ? (
                 <div className="text-[12px] text-green font-medium">None — open to anyone.</div>
               ) : (
-                <div className="space-y-1.5">
-                  {activePrereqs.map((p) => {
-                    const isCompleted = completed.has(p)
-                    const exists = p in PREREQ_GRAPH
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => exists && handleCrossDeptClick(p)}
-                        disabled={!exists}
-                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-left transition-all ${
-                          exists ? 'cursor-pointer hover:bg-card border-border' : 'cursor-default border-border/50 opacity-70'
-                        } ${isCompleted ? 'bg-green/5' : ''}`}
-                      >
-                        <span className="font-mono text-[12px] text-text">{p}</span>
-                        {isCompleted ? (
-                          <span className="text-green text-[10px] font-semibold flex items-center gap-1">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
-                              <path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                            done
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-muted">{exists ? 'view →' : 'external'}</span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
+                <>
+                  <div className="space-y-3">
+                    {activePrereqGroups.map((group) => (
+                      <div key={group.subject}>
+                        <div className="flex items-center gap-2 mb-1.5 text-[10px] font-mono uppercase tracking-wider text-muted">
+                          <span>{group.subject}</span>
+                          {group.likelyAlternatives && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gold/10 text-gold border border-gold/20" title="The catalog parser groups OR-style prereqs; these are likely alternatives — verify on the catalog">
+                              any of (likely)
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          {group.courses.map((p) => {
+                            const isCompleted = completed.has(p)
+                            const exists = p in PREREQ_GRAPH
+                            return (
+                              <button
+                                key={p}
+                                onClick={() => exists && handleCrossDeptClick(p)}
+                                onMouseEnter={() => exists && setHoveredCourse(p)}
+                                disabled={!exists}
+                                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-left transition-all ${
+                                  exists ? 'cursor-pointer hover:bg-card border-border' : 'cursor-default border-border/50 opacity-70'
+                                } ${isCompleted ? 'bg-green/5' : ''}`}
+                              >
+                                <span className="font-mono text-[12px] text-text">{p}</span>
+                                {isCompleted ? (
+                                  <span className="text-green text-[10px] font-semibold flex items-center gap-1">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
+                                      <path d="M5 12l5 5 9-11" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    done
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-muted">{exists ? 'view →' : 'external'}</span>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-[10px] text-dim leading-relaxed">
+                    The catalog parser can't always tell AND from OR — some entries above may be alternatives. <a href={catalogUrl(courseCodeToSubject(activeCourse), activeCourse.split(' ')[1] || '')} target="_blank" rel="noreferrer" className="text-accent hover:underline">Verify on the catalog →</a>
+                  </div>
+                </>
               )}
             </section>
 
-            {/* Direct unlocks */}
+            {/* Required for — what this course unlocks elsewhere */}
             <section>
               <div className="text-[11px] font-medium text-dim uppercase tracking-wider mb-2">
-                Unlocks ({activeUnlocks.length} direct, {activeAllDownstream.length} total downstream)
+                Required for ({activeUnlocks.length} direct, {activeAllDownstream.length} downstream)
               </div>
               {activeUnlocks.length === 0 ? (
                 <div className="text-[12px] text-muted">No tracked courses list this as a prerequisite.</div>
@@ -470,6 +511,7 @@ export function PrereqChains({ completedCodes }: PrereqChainsProps) {
                       <button
                         key={u}
                         onClick={() => handleCrossDeptClick(u)}
+                        onMouseEnter={() => setHoveredCourse(u)}
                         className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-border cursor-pointer hover:bg-card text-left"
                       >
                         <span className="font-mono text-[12px] text-text">{u}</span>

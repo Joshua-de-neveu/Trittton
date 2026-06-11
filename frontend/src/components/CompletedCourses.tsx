@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import type { CompletedCourse } from '../hooks/useCompletedCourses'
 import type { Course } from '../types'
 import { GradProgress } from './GradProgress'
-import { PREREQ_GRAPH, getCourseStatus, getUnlocks, getDepth, getAllDownstream } from '../lib/prereqChains'
+import { PREREQ_GRAPH, getCleanPrereqs, getCourseStatus, getUnlocks, getDepth, getAllDownstream } from '../lib/prereqChains'
 
 interface Props {
   completed: CompletedCourse[]
@@ -215,7 +215,7 @@ export function CompletedCourses({ completed, allCourses, onAdd, onRemove, onCle
                     const status = getCourseStatus(c.course_code, completedSet)
                     const isDone = status === 'completed'
                     const isSelected = selectedCourse === c.course_code
-                    const prereqs = PREREQ_GRAPH[c.course_code]
+                    const prereqs = getCleanPrereqs(c.course_code)
                     const unlockCount = getUnlocks(c.course_code).length
                     return (
                       <button key={c.course_code}
@@ -285,7 +285,7 @@ function DetailPanel({ courseCode, allCourses, completedSet, onClose, onSelect, 
   onToggle: (code: string, title: string) => void
 }) {
   const course = allCourses.find(c => c.course_code === courseCode)
-  const prereqs = PREREQ_GRAPH[courseCode] || []
+  const prereqs = getCleanPrereqs(courseCode)
   const status = getCourseStatus(courseCode, completedSet)
   const unlocks = getUnlocks(courseCode)
   const downstream = getAllDownstream(courseCode)
