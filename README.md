@@ -2,7 +2,7 @@
 
 > An intelligent course planning platform for UC San Diego students. Browse courses, check professor ratings, plan your schedule with AI, and track graduation progress — all in one place.
 
-**Built with AI** by Joshua, board member and co-founder of [GAMECHANGERSai](https://gamechangersai.org), using [Claude Code](https://claude.ai/code) (Anthropic).
+By Joshua, board member and co-founder of [GAMECHANGERSai](https://gamechangersai.org)
 
 ---
 
